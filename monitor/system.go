@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/process"
-	"monitor-service/config"
+	"github.com/yourusername/monitor-service/config"
 )
 
 // UserInfo holds initial user information.
@@ -27,28 +27,29 @@ type ProcessInfo struct {
 }
 
 // System monitors system users and processes for changes.
-func System(ctx context.Context, cfg config.SystemConfig) ([]string, error) {
+func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([]string, error) {
 	msgs := []string{}
+	clusterPrefix := fmt.Sprintf("**System (%s)**", clusterName)
 
 	// Monitor users
 	userFile := ".userNumber"
 	initialUsers, err := loadInitialUsers(userFile)
 	if err != nil {
-		return []string{fmt.Sprintf("**System**: Failed to load initial users: %v", err)}, err
+		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, err
 	}
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
-		return []string{fmt.Sprintf("**System**: Failed to get current users: %v", err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, err
 	}
 	if len(initialUsers) == 0 {
 		// First run, save initial
 		if err := saveUsers(userFile, currentUsers); err != nil {
-			return []string{fmt.Sprintf("**System**: Failed to save initial users: %v", err)}, err
+			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, err
 		}
 	} else {
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
 		if len(addedUsers) > 0 || len(removedUsers) > 0 {
-			userMsg := "**System Users Change**:\n"
+			userMsg := fmt.Sprintf("%s: Users Change:\n", clusterPrefix)
 			if len(addedUsers) > 0 {
 				userMsg += fmt.Sprintf("Added users: %s\n", strings.Join(addedUsers, ", "))
 			}
@@ -63,21 +64,21 @@ func System(ctx context.Context, cfg config.SystemConfig) ([]string, error) {
 	processFile := ".psAll"
 	initialProcesses, err := loadInitialProcesses(processFile)
 	if err != nil {
-		return []string{fmt.Sprintf("**System**: Failed to load initial processes: %v", err)}, err
+		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, err
 	}
 	currentProcesses, err := getCurrentProcesses()
 	if err != nil {
-		return []string{fmt.Sprintf("**System**: Failed to get current processes: %v", err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, err
 	}
 	if len(initialProcesses) == 0 {
 		// First run, save initial
 		if err := saveProcesses(processFile, currentProcesses); err != nil {
-			return []string{fmt.Sprintf("**System**: Failed to save initial processes: %v", err)}, err
+			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, err
 		}
 	} else {
 		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
 		if len(addedProcs) > 0 || len(removedProcs) > 0 {
-			procMsg := "**System Processes Change**:\n\n| PID | Name | Cmdline | Username |\n|-----|------|---------|----------|\n"
+			procMsg := fmt.Sprintf("%s: Processes Change:\n\n| PID | Name | Cmdline | Username |\n|-----|------|---------|----------|\n", clusterPrefix)
 			if len(addedProcs) > 0 {
 				procMsg += "**Added Processes:**\n"
 				for _, p := range addedProcs {

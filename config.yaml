@@ -28,9 +28,11 @@ host_monitoring:
   cpu_threshold: 80.0
   mem_threshold: 80.0
   disk_threshold: 90.0
-  net_io_threshold: 1000000  # 1MB/s
-  disk_io_threshold: 1000000 # 1MB/s
+  net_io_threshold: 1.0  # 1 GB/s
+  disk_io_threshold: 1.0 # 1 GB/s
 system_monitoring:
   enabled: false
-alert_silence_duration: "1h"
+cluster_name: "default-cluster"
+show_hostname: false
+alert_silence_duration: 60 # minutes
 check_interval: "30s"

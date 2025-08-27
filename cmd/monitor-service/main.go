@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"monitor-service/alert"
-	"monitor-service/config"
-	"monitor-service/monitor"
-	"monitor-service/util"
+	"github.com/yourusername/monitor-service/alert"
+	"github.com/yourusername/monitor-service/config"
+	"github.com/yourusername/monitor-service/monitor"
+	"github.com/yourusername/monitor-service/util"
 	"golang.org/x/net/context"
 )
 
@@ -29,7 +29,7 @@ func main() {
 	defer cancel()
 
 	// Load configuration.
-	cfg, err := config.LoadConfig("./config.yaml")
+	cfg, err := config.LoadConfig("/app/config.yaml")
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
@@ -41,11 +41,7 @@ func main() {
 	}
 
 	// Parse duration settings.
-	silenceDuration, err = time.ParseDuration(cfg.AlertSilenceDuration)
-	if err != nil {
-		fmt.Printf("Invalid alert_silence_duration: %v\n", err)
-		os.Exit(1)
-	}
+	silenceDuration = time.Duration(cfg.AlertSilenceDuration) * time.Minute
 	checkInterval, err = time.ParseDuration(cfg.CheckInterval)
 	if err != nil {
 		fmt.Printf("Invalid check_interval: %v\n", err)
@@ -53,7 +49,7 @@ func main() {
 	}
 
 	// Initialize alert system (Telegram bot).
-	alertBot, err := alert.NewAlertBot(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
+	alertBot, err := alert.NewAlertBot(cfg.Telegram.BotToken, cfg.Telegram.ChatID, cfg.ClusterName, cfg.ShowHostname)
 	if err != nil {
 		fmt.Printf("Error creating Telegram bot: %v\n", err)
 		os.Exit(1)
@@ -71,40 +67,47 @@ func main() {
 		}
 	}()
 
+	// Check if any monitoring is enabled.
+	anyMonitoringEnabled := cfg.RabbitMQ.Enabled || cfg.Redis.Enabled || cfg.MySQL.Enabled || cfg.Nacos.Enabled || cfg.HostMonitoring.Enabled || cfg.SystemMonitoring.Enabled
+
 	// Start monitoring loop.
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
+			if !anyMonitoringEnabled {
+				fmt.Println("无所事事")
+				continue
+			}
 			messages := []string{}
 			if cfg.RabbitMQ.Enabled {
-				if msg, err := monitor.RabbitMQ(ctx, cfg.RabbitMQ); err != nil {
+				if msg, err := monitor.RabbitMQ(ctx, cfg.RabbitMQ, cfg.ClusterName); err != nil {
 					messages = append(messages, msg)
 				}
 			}
 			if cfg.Redis.Enabled {
-				if msgs, err := monitor.Redis(ctx, cfg.Redis); err != nil {
+				if msgs, err := monitor.Redis(ctx, cfg.Redis, cfg.ClusterName); err != nil {
 					messages = append(messages, msgs...)
 				}
 			}
 			if cfg.MySQL.Enabled {
-				if msgs, err := monitor.MySQL(ctx, cfg.MySQL); err != nil {
+				if msgs, err := monitor.MySQL(ctx, cfg.MySQL, cfg.ClusterName); err != nil {
 					messages = append(messages, msgs...)
 				}
 			}
 			if cfg.Nacos.Enabled {
-				if msg, err := monitor.Nacos(ctx, cfg.Nacos); err != nil {
+				if msg, err := monitor.Nacos(ctx, cfg.Nacos, cfg.ClusterName); err != nil {
 					messages = append(messages, msg)
 				}
 			}
 			if cfg.HostMonitoring.Enabled {
-				if msgs, err := monitor.Host(ctx, cfg.HostMonitoring); err != nil {
+				if msgs, err := monitor.Host(ctx, cfg.HostMonitoring, cfg.ClusterName); err != nil {
 					messages = append(messages, msgs...)
 				}
 			}
 			if cfg.SystemMonitoring.Enabled {
-				if msgs, err := monitor.System(ctx, cfg.SystemMonitoring); err != nil {
+				if msgs, err := monitor.System(ctx, cfg.SystemMonitoring, cfg.ClusterName); err != nil {
 					messages = append(messages, msgs...)
 				}
 			}
