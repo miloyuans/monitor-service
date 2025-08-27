@@ -1,26 +1,26 @@
 monitoring:
-  enabled: true
+  enabled: false
 telegram:
   bot_token: "your_bot_token"
   chat_id: 123456789
 rabbitmq:
-  enabled: true
+  enabled: false
   url: "amqp://guest:guest@localhost:5672/"
   cluster_name: "rabbitmq-cluster"
 redis:
-  enabled: true
+  enabled: false
   addr: "localhost:6379"
   password: ""
   db: 0
   cluster_name: "redis-cluster"
   big_key_threshold: 1000000
 mysql:
-  enabled: true
+  enabled: false
   dsn: "user:password@tcp(localhost:3306)/dbname"
   cluster_name: "mysql-cluster"
   max_connections: 100
 nacos:
-  enabled: true
+  enabled: false
   address: "http://localhost:8848"
   cluster_name: "nacos-cluster"
 host_monitoring:
