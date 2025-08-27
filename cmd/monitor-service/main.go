@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourusername/monitor-service/alert"
-	"github.com/yourusername/monitor-service/config"
-	"github.com/yourusername/monitor-service/monitor"
-	"github.com/yourusername/monitor-service/util"
+	"monitor-service/alert"
+	"monitor-service/config"
+	"monitor-service/monitor"
+	"monitor-service/util"
 	"golang.org/x/net/context"
 )
 
