@@ -11,18 +11,19 @@ import (
 )
 
 // MySQL checks MySQL for connectivity, slave status, deadlocks, connections, and slow queries.
-func MySQL(ctx context.Context, cfg config.MySQLConfig) ([]string, error) {
+func MySQL(ctx context.Context, cfg config.MySQLConfig, clusterName string) ([]string, error) {
 	db, err := sql.Open("mysql", cfg.DSN)
 	if err != nil {
-		return []string{fmt.Sprintf("**MySQL (%s)**: Open failed: %v", cfg.ClusterName, err)}, err
+		return []string{fmt.Sprintf("**MySQL (%s)**: Open failed: %v", clusterName, err)}, err
 	}
 	defer db.Close()
 
-	if err := db.PingContext(ctx); err != nil {
-		return []string{fmt.Sprintf("**MySQL (%s)**: Ping failed: %v", cfg.ClusterName, err)}, err
-	}
-
+	clusterPrefix := fmt.Sprintf("**MySQL (%s)**", clusterName)
 	msgs := []string{}
+
+	if err := db.PingContext(ctx); err != nil {
+		return []string{fmt.Sprintf("%s: Ping failed: %v", clusterPrefix, err)}, err
+	}
 
 	// Check slave status.
 	rows, err := db.QueryContext(ctx, "SHOW SLAVE STATUS")
@@ -39,7 +40,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig) ([]string, error) {
 			slaveIO := string(*values[10].(*sql.RawBytes))  // Slave_IO_Running
 			slaveSQL := string(*values[11].(*sql.RawBytes)) // Slave_SQL_Running
 			if slaveIO != "Yes" || slaveSQL != "Yes" {
-				msgs = append(msgs, fmt.Sprintf("**MySQL (%s)**: Slave not running: IO=%s, SQL=%s", cfg.ClusterName, slaveIO, slaveSQL))
+				msgs = append(msgs, fmt.Sprintf("%s: Slave not running: IO=%s, SQL=%s", clusterPrefix, slaveIO, slaveSQL))
 			}
 		}
 	}
@@ -52,7 +53,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig) ([]string, error) {
 		if rows.Next() {
 			rows.Scan(&statusType, &trxId, &status)
 			if strings.Contains(status, "deadlock") {
-				msgs = append(msgs, fmt.Sprintf("**MySQL (%s)**: Deadlock detected", cfg.ClusterName))
+				msgs = append(msgs, fmt.Sprintf("%s: Deadlock detected", clusterPrefix))
 			}
 		}
 	}
@@ -61,14 +62,14 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig) ([]string, error) {
 	var threads int
 	err = db.QueryRowContext(ctx, "SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'THREADS_CONNECTED'").Scan(&threads)
 	if err == nil && threads > cfg.MaxConnections {
-		msgs = append(msgs, fmt.Sprintf("**MySQL (%s)**: High connections: %d > %d", cfg.ClusterName, threads, cfg.MaxConnections))
+		msgs = append(msgs, fmt.Sprintf("%s: High connections: %d > %d", clusterPrefix, threads, cfg.MaxConnections))
 	}
 
 	// Check slow queries.
 	var slowQueries uint64
 	err = db.QueryRowContext(ctx, "SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'SLOW_QUERIES'").Scan(&slowQueries)
 	if err == nil && slowQueries > 0 {
-		msgs = append(msgs, fmt.Sprintf("**MySQL (%s)**: Slow queries: %d", cfg.ClusterName, slowQueries))
+		msgs = append(msgs, fmt.Sprintf("%s: Slow queries: %d", clusterPrefix, slowQueries))
 	}
 
 	if len(msgs) > 0 {

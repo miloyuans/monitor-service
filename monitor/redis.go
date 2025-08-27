@@ -10,22 +10,25 @@ import (
 )
 
 // Redis checks the Redis cluster for connectivity, node failures, slot coverage, and big keys.
-func Redis(ctx context.Context, cfg config.RedisConfig) ([]string, error) {
+func Redis(ctx context.Context, cfg config.RedisConfig, clusterName string) ([]string, error) {
 	client := redis.NewClusterClient(&redis.ClusterOptions{
 		Addrs:    []string{cfg.Addr},
 		Password: cfg.Password,
 	})
 	defer client.Close()
 
+	clusterPrefix := fmt.Sprintf("**Redis (%s)**", clusterName)
+	msgs := []string{}
+
 	pong, err := client.Ping(ctx).Result()
 	if err != nil || pong != "PONG" {
-		return []string{fmt.Sprintf("**Redis (%s)**: Connection failed: %v", cfg.ClusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Connection failed: %v", clusterPrefix, err)}, err
 	}
 
 	// Check nodes.
 	nodes, err := client.ClusterNodes(ctx).Result()
 	if err != nil {
-		return []string{fmt.Sprintf("**Redis (%s)**: Failed to get cluster nodes: %v", cfg.ClusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get cluster nodes: %v", clusterPrefix, err)}, err
 	}
 	lines := strings.Split(nodes, "\n")
 	failedNodes := []string{}
@@ -40,22 +43,21 @@ func Redis(ctx context.Context, cfg config.RedisConfig) ([]string, error) {
 			}
 		}
 	}
-	msgs := []string{}
 	if len(failedNodes) > 0 {
-		msgs = append(msgs, fmt.Sprintf("**Redis (%s)**: Failed nodes: %s", cfg.ClusterName, strings.Join(failedNodes, ", ")))
+		msgs = append(msgs, fmt.Sprintf("%s: Failed nodes: %s", clusterPrefix, strings.Join(failedNodes, ", ")))
 	}
 
 	// Check slots.
 	slots, err := client.ClusterSlots(ctx).Result()
 	if err != nil {
-		msgs = append(msgs, fmt.Sprintf("**Redis (%s)**: Failed to get cluster slots: %v", cfg.ClusterName, err))
+		msgs = append(msgs, fmt.Sprintf("%s: Failed to get cluster slots: %v", clusterPrefix, err))
 	} else {
 		covered := 0
 		for _, slot := range slots {
 			covered += int(slot.End - slot.Start + 1)
 		}
 		if covered != 16384 {
-			msgs = append(msgs, fmt.Sprintf("**Redis (%s)**: Incomplete slot coverage: %d/16384", cfg.ClusterName, covered))
+			msgs = append(msgs, fmt.Sprintf("%s: Incomplete slot coverage: %d/16384", clusterPrefix, covered))
 		}
 	}
 
@@ -83,10 +85,10 @@ func Redis(ctx context.Context, cfg config.RedisConfig) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		msgs = append(msgs, fmt.Sprintf("**Redis (%s)**: Failed to scan for big keys: %v", cfg.ClusterName, err))
+		msgs = append(msgs, fmt.Sprintf("%s: Failed to scan for big keys: %v", clusterPrefix, err))
 	}
 	if len(bigKeys) > 0 {
-		msgs = append(msgs, fmt.Sprintf("**Redis (%s)**: Big keys found:\n%s", cfg.ClusterName, strings.Join(bigKeys, "\n")))
+		msgs = append(msgs, fmt.Sprintf("%s: Big keys found:\n%s", clusterPrefix, strings.Join(bigKeys, "\n")))
 	}
 
 	if len(msgs) > 0 {
