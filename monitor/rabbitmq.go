@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/rabbitmq/amqp091-go"
-	"github.com/yourusername/monitor-service/config"
+	"monitor-service/config"
 )
 
 // RabbitMQ checks the RabbitMQ connection.

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/yourusername/monitor-service/config"
+	"monitor-service/config"
 )
 
 // Redis checks the Redis cluster for connectivity, node failures, slot coverage, and big keys.

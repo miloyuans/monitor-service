@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/process"
-	"github.com/yourusername/monitor-service/config"
+	"monitor-service/config"
 )
 
 // UserInfo holds initial user information.

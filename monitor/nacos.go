@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/yourusername/monitor-service/config"
+	"monitor-service/config"
 )
 
 // Nacos checks the Nacos service health.

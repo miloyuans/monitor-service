@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/yourusername/monitor-service/config"
+	"monitor-service/config"
 )
 
 // MySQL checks MySQL for connectivity, slave status, deadlocks, connections, and slow queries.
