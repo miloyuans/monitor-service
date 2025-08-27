@@ -1,5 +1,3 @@
-// No changes, keep as is from previous
-
 package monitor
 
 import (
@@ -8,17 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/yourusername/monitor-service/config"
 )
 
-// NacosConfig holds Nacos-specific configuration.
-type NacosConfig struct {
-	Enabled     bool
-	Address     string
-	ClusterName string
-}
-
 // Nacos checks the Nacos service health.
-func Nacos(ctx context.Context, cfg NacosConfig) (string, error) {
+func Nacos(ctx context.Context, cfg config.NacosConfig) (string, error) {
 	url := cfg.Address + "/nacos/v1/ns/health"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

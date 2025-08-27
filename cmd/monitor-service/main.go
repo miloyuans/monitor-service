@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"monitor-service/alert"
-	"monitor-service/config"
-	"monitor-service/monitor"
-	"monitor-service/util"
+	"github.com/yourusername/monitor-service/alert"
+	"github.com/yourusername/monitor-service/config"
+	"github.com/yourusername/monitor-service/monitor"
+	"github.com/yourusername/monitor-service/util"
 	"golang.org/x/net/context"
 )
 
@@ -29,7 +29,7 @@ func main() {
 	defer cancel()
 
 	// Load configuration.
-	cfg, err := config.LoadConfig("/app/config.yaml")
+	cfg, err := config.LoadConfig("./config.yaml")
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)

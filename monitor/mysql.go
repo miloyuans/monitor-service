@@ -7,18 +7,11 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/yourusername/monitor-service/config"
 )
 
-// MySQLConfig holds MySQL-specific configuration.
-type MySQLConfig struct {
-	Enabled        bool
-	DSN            string
-	ClusterName    string
-	MaxConnections int
-}
-
 // MySQL checks MySQL for connectivity, slave status, deadlocks, connections, and slow queries.
-func MySQL(ctx context.Context, cfg MySQLConfig) ([]string, error) {
+func MySQL(ctx context.Context, cfg config.MySQLConfig) ([]string, error) {
 	db, err := sql.Open("mysql", cfg.DSN)
 	if err != nil {
 		return []string{fmt.Sprintf("**MySQL (%s)**: Open failed: %v", cfg.ClusterName, err)}, err
@@ -66,7 +59,7 @@ func MySQL(ctx context.Context, cfg MySQLConfig) ([]string, error) {
 
 	// Check connections.
 	var threads int
-	err = db.QueryRowContext(ctx, "SELECT Variable_value FROM information_schema.global_status WHERE variable_name = 'Threads_connected'").Scan(&threads)
+	err = db.QueryRowContext(ctx, "SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'THREADS_CONNECTED'").Scan(&threads)
 	if err == nil && threads > cfg.MaxConnections {
 		msgs = append(msgs, fmt.Sprintf("**MySQL (%s)**: High connections: %d > %d", cfg.ClusterName, threads, cfg.MaxConnections))
 	}

@@ -1,5 +1,3 @@
-// No changes, keep as is from previous
-
 package alert
 
 import (

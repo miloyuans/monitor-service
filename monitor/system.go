@@ -10,12 +10,8 @@ import (
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/process"
+	"github.com/yourusername/monitor-service/config"
 )
-
-// SystemConfig holds system monitoring configuration.
-type SystemConfig struct {
-	Enabled bool
-}
 
 // UserInfo holds initial user information.
 type UserInfo struct {
@@ -31,7 +27,7 @@ type ProcessInfo struct {
 }
 
 // System monitors system users and processes for changes.
-func System(ctx context.Context, cfg SystemConfig) ([]string, error) {
+func System(ctx context.Context, cfg config.SystemConfig) ([]string, error) {
 	msgs := []string{}
 
 	// Monitor users

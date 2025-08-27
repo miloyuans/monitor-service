@@ -6,20 +6,11 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/yourusername/monitor-service/config"
 )
 
-// RedisConfig holds Redis-specific configuration.
-type RedisConfig struct {
-	Enabled         bool
-	Addr            string
-	Password        string
-	DB              int
-	ClusterName     string
-	BigKeyThreshold int64
-}
-
 // Redis checks the Redis cluster for connectivity, node failures, slot coverage, and big keys.
-func Redis(ctx context.Context, cfg RedisConfig) ([]string, error) {
+func Redis(ctx context.Context, cfg config.RedisConfig) ([]string, error) {
 	client := redis.NewClusterClient(&redis.ClusterOptions{
 		Addrs:    []string{cfg.Addr},
 		Password: cfg.Password,

@@ -9,20 +9,11 @@ import (
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
+	"github.com/yourusername/monitor-service/config"
 )
 
-// HostConfig holds host monitoring configuration.
-type HostConfig struct {
-	Enabled          bool
-	CPUThreshold     float64
-	MemThreshold     float64
-	DiskThreshold    float64
-	NetIOThreshold   int64 // bytes/s
-	DiskIOThreshold  int64 // bytes/s
-}
-
 // Host monitors host resources and returns alerts if thresholds are exceeded.
-func Host(ctx context.Context, cfg HostConfig) ([]string, error) {
+func Host(ctx context.Context, cfg config.HostConfig) ([]string, error) {
 	msgs := []string{}
 
 	// CPU usage
