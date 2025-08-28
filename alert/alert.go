@@ -23,6 +23,7 @@ type AlertBot struct {
 type AlertData struct {
 	ClusterName  string
 	Hostname     string
+	HostIP       string
 	Service      string
 	Issue        string
 	Details      string
@@ -46,6 +47,7 @@ func NewAlertBot(token string, chatID int64, clusterName string, showHostname bo
 
 *环境*: {{.ClusterName}}
 {{if .ShowHostname}}*主机名*: {{.Hostname}}{{end}}
+*主机IP*: {{.HostIP}}
 *服务名*: {{.Service}}
 *事件名*: {{.Issue}}
 *详情*: 
@@ -62,7 +64,7 @@ func NewAlertBot(token string, chatID int64, clusterName string, showHostname bo
 }
 
 // SendAlert sends a formatted alert to Telegram using the Markdown template.
-func (a *AlertBot) SendAlert(message string) {
+func (a *AlertBot) SendAlert(message string, hostIP string) {
 	lines := strings.Split(message, "\n\n")
 	for _, line := range lines {
 		parts := strings.SplitN(line, ": ", 2)
@@ -73,8 +75,9 @@ func (a *AlertBot) SendAlert(message string) {
 		data := AlertData{
 			ClusterName:  a.clusterName,
 			Hostname:     a.hostname,
+			HostIP:       hostIP,
 			Service:      service,
-			Issue:        "Service Failure",
+			Issue:        "服务异常",
 			Details:      parts[1],
 			ShowHostname: a.showHostname,
 		}
