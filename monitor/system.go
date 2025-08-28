@@ -93,7 +93,7 @@ func bytesCompare(a, b net.IP) int {
 // System monitors system users and processes for changes.
 func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertBot) ([]string, error) {
 	msgs := []string{}
-	clusterPrefix := fmt.Sprintf("**System (%s)**", cfg.ClusterName)
+	clusterPrefix := fmt.Sprintf("**System (%s)**", alertBot.clusterName)
 
 	// File size limit (500 MB)
 	const maxFileSize = 500 * 1024 * 1024 // 500 MB in bytes
