@@ -195,7 +195,7 @@ func getCurrentProcesses() ([]ProcessInfo, error) {
 		times, err := p.Times()
 		if err != nil {
 			slog.Warn("Failed to get process times", "pid", p.Pid, "error", err)
-			times = &process.CPUTimesStat{}
+			times = &process.TimesStat{}
 		}
 		total := times.User + times.System
 		minutes := int(total) / 60
