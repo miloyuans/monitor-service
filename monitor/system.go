@@ -35,6 +35,14 @@ type ProcessInfo struct {
 	CMD   string `json:"cmd"`
 }
 
+// ChangeLogEntry holds change details for logging.
+type ChangeLogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Type      string    `json:"type"` // "user" or "process"
+	Added     []any     `json:"added"`
+	Removed   []any     `json:"removed"`
+}
+
 // System monitors system users and processes for changes.
 func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([]string, error) {
 	msgs := []string{}
@@ -42,8 +50,10 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 
 	// File size limit (500 MB)
 	const maxFileSize = 500 * 1024 * 1024 // 500 MB in bytes
+	// Change log file
+	changeLogFile := ".changeLog.jsonl"
 	// Files to check
-	filesToCheck := []string{".userNumber", ".psAll"}
+	filesToCheck := []string{changeLogFile}
 
 	// Check and cleanup historical files every 30 days
 	lastCleanupFile := ".lastCleanup"
@@ -98,7 +108,12 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 			}
 			if userMsg != "" {
 				msgs = append(msgs, fmt.Sprintf("%s: 用户变更:\n%s", clusterPrefix, userMsg))
-				// Update initial users file to current
+				// Log change incrementally
+				if err := logChange(changeLogFile, "user", addedUsers, removedUsers); err != nil {
+					slog.Error("Failed to log user change", "error", err)
+					return []string{fmt.Sprintf("%s: Failed to log user change: %v", clusterPrefix, err)}, err
+				}
+				// Refresh initialization data
 				if err := saveUsers(userInitialFile, currentUsers); err != nil {
 					slog.Error("Failed to update initial users", "error", err)
 					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, err
@@ -143,7 +158,12 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 			}
 			if procMsg != "" {
 				msgs = append(msgs, fmt.Sprintf("%s: 进程变更:\n%s", clusterPrefix, procMsg))
-				// Update initial processes file to current
+				// Log change incrementally
+				if err := logChange(changeLogFile, "process", addedProcs, removedProcs); err != nil {
+					slog.Error("Failed to log process change", "error", err)
+					return []string{fmt.Sprintf("%s: Failed to log process change: %v", clusterPrefix, err)}, err
+				}
+				// Refresh initialization data
 				if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 					slog.Error("Failed to update initial processes", "error", err)
 					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, err
@@ -154,7 +174,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 
 	// Reinitialize if file size exceeds limit and no alerts
 	if needsReinit && len(msgs) == 0 {
-		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses); err != nil {
+		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses, changeLogFile); err != nil {
 			slog.Error("Failed to reinitialize system monitoring", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to reinitialize system monitoring: %v", clusterPrefix, err)}, err
 		}
@@ -164,6 +184,34 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		return msgs, fmt.Errorf("system issues")
 	}
 	return nil, nil
+}
+
+// logChange appends a change entry to the log file.
+func logChange(file string, changeType string, added, removed any) error {
+	entry := ChangeLogEntry{
+		Timestamp: time.Now(),
+		Type:      changeType,
+		Added:     added,
+		Removed:   removed,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		slog.Error("Failed to marshal change entry", "error", err)
+		return err
+	}
+	data = append(data, '\n') // JSONL format
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		slog.Error("Failed to open change log file", "file", file, "error", err)
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		slog.Error("Failed to write change entry", "file", file, "error", err)
+		return err
+	}
+	slog.Info("Logged change entry", "type", changeType, "added", len(added.([]any)), "removed", len(removed.([]any)))
+	return nil
 }
 
 // getCurrentUsers gets current system users from /etc/passwd.
