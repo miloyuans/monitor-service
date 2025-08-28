@@ -29,6 +29,7 @@ func main() {
 		AddSource: true,
 		Level:     slog.LevelInfo,
 	}))
+	slog.SetDefault(logger)
 
 	// Initialize context with cancellation support
 	ctx, cancel = context.WithCancel(context.Background())
@@ -101,7 +102,7 @@ func main() {
 				}
 			}
 			if cfg.SystemMonitoring.Enabled {
-				if msgs, err := monitor.System(ctx, cfg.SystemMonitoring, cfg.ClusterName); err != nil {
+				if msgs, err := monitor.System(ctx, cfg.SystemMonitoring, alertBot); err != nil {
 					messages = append(messages, msgs...)
 				}
 			}
@@ -115,7 +116,7 @@ func main() {
 				}
 				last, ok := alertLastSent.Load(hash)
 				if !ok || time.Since(last.(time.Time)) > silenceDuration {
-					alertBot.SendAlert(alertMsg)
+					alertBot.SendAlert(alertMsg, "unknown") // Use "unknown" as fallback IP for non-system monitors
 					alertLastSent.Store(hash, time.Now())
 				}
 			}
