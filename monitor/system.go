@@ -43,7 +43,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 	// File size limit (500 MB)
 	const maxFileSize = 500 * 1024 * 1024 // 500 MB in bytes
 	// Files to check
-	filesToCheck := []string{".userNumber", ".currentUsers", ".psAll", ".currentProcesses"}
+	filesToCheck := []string{".userNumber", ".psAll"}
 
 	// Check and cleanup historical files every 30 days
 	lastCleanupFile := ".lastCleanup"
@@ -70,7 +70,6 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 
 	// Monitor users
 	userInitialFile := ".userNumber"
-	userCurrentFile := ".currentUsers"
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
 		slog.Error("Failed to get current users", "error", err)
@@ -82,27 +81,15 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, err
 	}
 	if len(initialUsers) == 0 {
-		// First run, save initial and current
+		// First run, save initial
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
 			slog.Error("Failed to save initial users", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, err
 		}
-		if err := saveUsers(userCurrentFile, currentUsers); err != nil {
-			slog.Error("Failed to save current users", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to save current users: %v", clusterPrefix, err)}, err
-		}
 	} else {
-		// Load last reported users
-		lastUsers, err := loadInitialUsers(userCurrentFile)
-		if err != nil {
-			slog.Error("Failed to load last reported users", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to load last reported users: %v", clusterPrefix, err)}, err
-		}
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
-		// Check if changes differ from last reported
-		lastAddedUsers, lastRemovedUsers := diffStrings(currentUsers, lastUsers)
 		userMsg := ""
-		if !equalStringSlices(addedUsers, lastAddedUsers) || !equalStringSlices(removedUsers, lastRemovedUsers) {
+		if len(addedUsers) > 0 || len(removedUsers) > 0 {
 			if len(addedUsers) > 0 {
 				userMsg += "**增加的用户:**\n- " + strings.Join(addedUsers, "\n- ") + "\n"
 			}
@@ -111,12 +98,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 			}
 			if userMsg != "" {
 				msgs = append(msgs, fmt.Sprintf("%s: 用户变更:\n%s", clusterPrefix, userMsg))
-				// Update current users file
-				if err := saveUsers(userCurrentFile, currentUsers); err != nil {
-					slog.Error("Failed to save current users", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to save current users: %v", clusterPrefix, err)}, err
-				}
-				// Update initial users file to reset baseline
+				// Update initial users file to current
 				if err := saveUsers(userInitialFile, currentUsers); err != nil {
 					slog.Error("Failed to update initial users", "error", err)
 					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, err
@@ -127,7 +109,6 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 
 	// Monitor processes
 	processInitialFile := ".psAll"
-	processCurrentFile := ".currentProcesses"
 	currentProcesses, err := getCurrentProcesses()
 	if err != nil {
 		slog.Error("Failed to get current processes", "error", err)
@@ -139,27 +120,15 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, err
 	}
 	if len(initialProcesses) == 0 {
-		// First run, save initial and current
+		// First run, save initial
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 			slog.Error("Failed to save initial processes", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, err
 		}
-		if err := saveProcesses(processCurrentFile, currentProcesses); err != nil {
-			slog.Error("Failed to save current processes", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to save current processes: %v", clusterPrefix, err)}, err
-		}
 	} else {
-		// Load last reported processes
-		lastProcesses, err := loadInitialProcesses(processCurrentFile)
-		if err != nil {
-			slog.Error("Failed to load last reported processes", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to load last reported processes: %v", clusterPrefix, err)}, err
-		}
 		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
-		// Check if changes differ from last reported
-		lastAddedProcs, lastRemovedProcs := diffProcesses(currentProcesses, lastProcesses)
 		procMsg := ""
-		if !equalProcessSlices(addedProcs, lastAddedProcs) || !equalProcessSlices(removedProcs, lastRemovedProcs) {
+		if len(addedProcs) > 0 || len(removedProcs) > 0 {
 			if len(addedProcs) > 0 {
 				procMsg += "**增加的进程:**\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|-----|-----|------|-------|-----|------|-----|\n"
 				for _, p := range addedProcs {
@@ -174,12 +143,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 			}
 			if procMsg != "" {
 				msgs = append(msgs, fmt.Sprintf("%s: 进程变更:\n%s", clusterPrefix, procMsg))
-				// Update current processes file
-				if err := saveProcesses(processCurrentFile, currentProcesses); err != nil {
-					slog.Error("Failed to save current processes", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to save current processes: %v", clusterPrefix, err)}, err
-				}
-				// Update initial processes file to reset baseline
+				// Update initial processes file to current
 				if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 					slog.Error("Failed to update initial processes", "error", err)
 					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, err
@@ -190,7 +154,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 
 	// Reinitialize if file size exceeds limit and no alerts
 	if needsReinit && len(msgs) == 0 {
-		if err := reinitializeSystemMonitoring(userInitialFile, userCurrentFile, processInitialFile, processCurrentFile, currentUsers, currentProcesses); err != nil {
+		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses); err != nil {
 			slog.Error("Failed to reinitialize system monitoring", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to reinitialize system monitoring: %v", clusterPrefix, err)}, err
 		}
@@ -365,85 +329,31 @@ func diffStrings(current, initial []string) (added, removed []string) {
 	return
 }
 
-// diffProcesses finds added and removed processes (comparing by all fields).
+// diffProcesses finds added and removed processes (comparing by PID and CMD).
 func diffProcesses(current, initial []ProcessInfo) (added, removed []ProcessInfo) {
 	initialMap := make(map[string]bool)
 	for _, p := range initial {
-		key := fmt.Sprintf("%s:%d:%d:%s:%s:%s:%s", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
+		key := fmt.Sprintf("%d:%s", p.PID, p.CMD)
 		initialMap[key] = true
 	}
 	for _, p := range current {
-		key := fmt.Sprintf("%s:%d:%d:%s:%s:%s:%s", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
+		key := fmt.Sprintf("%d:%s", p.PID, p.CMD)
 		if !initialMap[key] {
 			added = append(added, p)
 		}
 	}
 	currentMap := make(map[string]bool)
 	for _, p := range current {
-		key := fmt.Sprintf("%s:%d:%d:%s:%s:%s:%s", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
+		key := fmt.Sprintf("%d:%s", p.PID, p.CMD)
 		currentMap[key] = true
 	}
 	for _, p := range initial {
-		key := fmt.Sprintf("%s:%d:%d:%s:%s:%s:%s", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
+		key := fmt.Sprintf("%d:%s", p.PID, p.CMD)
 		if !currentMap[key] {
 			removed = append(removed, p)
 		}
 	}
 	return
-}
-
-// equalStringSlices checks if two string slices are equal.
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	aCopy := make([]string, len(a))
-	bCopy := make([]string, len(b))
-	copy(aCopy, a)
-	copy(bCopy, b)
-	sort.Strings(aCopy)
-	sort.Strings(bCopy)
-	for i := range aCopy {
-		if aCopy[i] != bCopy[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// equalProcessSlices checks if two ProcessInfo slices are equal.
-func equalProcessSlices(a, b []ProcessInfo) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	// Sort processes by key for comparison
-	type processKey struct {
-		User, STIME, TTY, TIME, CMD string
-		PID, PPID                   int32
-	}
-	getKey := func(p ProcessInfo) processKey {
-		return processKey{p.User, p.STIME, p.TTY, p.TIME, p.CMD, p.PID, p.PPID}
-	}
-	keysA := make([]processKey, len(a))
-	keysB := make([]processKey, len(b))
-	for i, p := range a {
-		keysA[i] = getKey(p)
-	}
-	for i, p := range b {
-		keysB[i] = getKey(p)
-	}
-	sort.Slice(keysA, func(i, j int) bool {
-		return fmt.Sprintf("%v", keysA[i]) < fmt.Sprintf("%v", keysA[j])
-	})
-	sort.Slice(keysB, func(i, j int) bool {
-		return fmt.Sprintf("%v", keysB[i]) < fmt.Sprintf("%v", keysB[j])
-	})
-	for i := range keysA {
-		if keysA[i] != keysB[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // shouldCleanup checks if cleanup is needed based on last cleanup time.
@@ -509,9 +419,9 @@ func cleanupHistoricalFiles(retentionPeriod time.Duration) error {
 }
 
 // reinitializeSystemMonitoring archives old files and reinitializes monitoring.
-func reinitializeSystemMonitoring(userInitialFile, userCurrentFile, processInitialFile, processCurrentFile string, currentUsers []string, currentProcesses []ProcessInfo) error {
+func reinitializeSystemMonitoring(userInitialFile, processInitialFile string, currentUsers []string, currentProcesses []ProcessInfo) error {
 	timestamp := time.Now().Format("20060102_150405")
-	filesToArchive := []string{userInitialFile, userCurrentFile, processInitialFile, processCurrentFile}
+	filesToArchive := []string{userInitialFile, processInitialFile}
 
 	// Create tar.gz archive
 	archiveFile := fmt.Sprintf("archive_%s.tar.gz", timestamp)
@@ -562,16 +472,8 @@ func reinitializeSystemMonitoring(userInitialFile, userCurrentFile, processIniti
 		slog.Error("Failed to reinitialize user initial file", "file", userInitialFile, "error", err)
 		return err
 	}
-	if err := saveUsers(userCurrentFile, currentUsers); err != nil {
-		slog.Error("Failed to reinitialize user current file", "file", userCurrentFile, "error", err)
-		return err
-	}
 	if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 		slog.Error("Failed to reinitialize process initial file", "file", processInitialFile, "error", err)
-		return err
-	}
-	if err := saveProcesses(processCurrentFile, currentProcesses); err != nil {
-		slog.Error("Failed to reinitialize process current file", "file", processCurrentFile, "error", err)
 		return err
 	}
 	slog.Info("Reinitialized system monitoring files")
