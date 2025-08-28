@@ -42,13 +42,13 @@ func NewAlertBot(token string, chatID int64, clusterName string, showHostname bo
 		hostname = "unknown"
 	}
 	tmpl := template.Must(template.New("alert").Parse(`
-🚨 *Service Alert* 🚨
+🚨 *监控 Monitoring 告警 Alert* 🚨
 
-*Cluster*: {{.ClusterName}}
-{{if .ShowHostname}}*Hostname*: {{.Hostname}}{{end}}
-*Service*: {{.Service}}
-*Issue*: {{.Issue}}
-*Details*: 
+*环境*: {{.ClusterName}}
+{{if .ShowHostname}}*主机名*: {{.Hostname}}{{end}}
+*服务名*: {{.Service}}
+*事件名*: {{.Issue}}
+*详情*: 
 {{.Details}}
 `))
 	return &AlertBot{

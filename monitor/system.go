@@ -15,7 +15,7 @@ import (
 	"monitor-service/config"
 )
 
-// UserInfo holds initial user information.
+// UserInfo holds user information.
 type UserInfo struct {
 	Users []string `json:"users"`
 }
@@ -37,8 +37,9 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 	clusterPrefix := fmt.Sprintf("**System (%s)**", clusterName)
 
 	// Monitor users
-	userFile := ".userNumber"
-	initialUsers, err := loadInitialUsers(userFile)
+	userInitialFile := ".userNumber"
+	userCurrentFile := ".currentUsers"
+	initialUsers, err := loadInitialUsers(userInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial users", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, err
@@ -49,28 +50,53 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, err
 	}
 	if len(initialUsers) == 0 {
-		// First run, save initial
-		if err := saveUsers(userFile, currentUsers); err != nil {
+		// First run, save initial and current
+		if err := saveUsers(userInitialFile, currentUsers); err != nil {
 			slog.Error("Failed to save initial users", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, err
 		}
+		if err := saveUsers(userCurrentFile, currentUsers); err != nil {
+			slog.Error("Failed to save current users", "error", err)
+			return []string{fmt.Sprintf("%s: Failed to save current users: %v", clusterPrefix, err)}, err
+		}
 	} else {
+		// Load last reported users
+		lastUsers, err := loadInitialUsers(userCurrentFile)
+		if err != nil {
+			slog.Error("Failed to load last reported users", "error", err)
+			return []string{fmt.Sprintf("%s: Failed to load last reported users: %v", clusterPrefix, err)}, err
+		}
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
+		// Check if changes differ from last reported
+		lastAddedUsers, lastRemovedUsers := diffStrings(currentUsers, lastUsers)
 		userMsg := ""
-		if len(addedUsers) > 0 {
-			userMsg += "**增加的用户:**\n- " + strings.Join(addedUsers, "\n- ") + "\n"
-		}
-		if len(removedUsers) > 0 {
-			userMsg += "**减少的用户:**\n- " + strings.Join(removedUsers, "\n- ") + "\n"
-		}
-		if userMsg != "" {
-			msgs = append(msgs, fmt.Sprintf("%s: 用户变更:\n%s", clusterPrefix, userMsg))
+		if !equalStringSlices(addedUsers, lastAddedUsers) || !equalStringSlices(removedUsers, lastRemovedUsers) {
+			if len(addedUsers) > 0 {
+				userMsg += "**增加的用户:**\n- " + strings.Join(addedUsers, "\n- ") + "\n"
+			}
+			if len(removedUsers) > 0 {
+				userMsg += "**减少的用户:**\n- " + strings.Join(removedUsers, "\n- ") + "\n"
+			}
+			if userMsg != "" {
+				msgs = append(msgs, fmt.Sprintf("%s: 用户变更:\n%s", clusterPrefix, userMsg))
+				// Update current users file
+				if err := saveUsers(userCurrentFile, currentUsers); err != nil {
+					slog.Error("Failed to save current users", "error", err)
+					return []string{fmt.Sprintf("%s: Failed to save current users: %v", clusterPrefix, err)}, err
+				}
+				// Update initial users file to reset baseline
+				if err := saveUsers(userInitialFile, currentUsers); err != nil {
+					slog.Error("Failed to update initial users", "error", err)
+					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, err
+				}
+			}
 		}
 	}
 
 	// Monitor processes
-	processFile := ".psAll"
-	initialProcesses, err := loadInitialProcesses(processFile)
+	processInitialFile := ".psAll"
+	processCurrentFile := ".currentProcesses"
+	initialProcesses, err := loadInitialProcesses(processInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial processes", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, err
@@ -81,28 +107,52 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, err
 	}
 	if len(initialProcesses) == 0 {
-		// First run, save initial
-		if err := saveProcesses(processFile, currentProcesses); err != nil {
+		// First run, save initial and current
+		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 			slog.Error("Failed to save initial processes", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, err
 		}
+		if err := saveProcesses(processCurrentFile, currentProcesses); err != nil {
+			slog.Error("Failed to save current processes", "error", err)
+			return []string{fmt.Sprintf("%s: Failed to save current processes: %v", clusterPrefix, err)}, err
+		}
 	} else {
+		// Load last reported processes
+		lastProcesses, err := loadInitialProcesses(processCurrentFile)
+		if err != nil {
+			slog.Error("Failed to load last reported processes", "error", err)
+			return []string{fmt.Sprintf("%s: Failed to load last reported processes: %v", clusterPrefix, err)}, err
+		}
 		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
+		// Check if changes differ from last reported
+		lastAddedProcs, lastRemovedProcs := diffProcesses(currentProcesses, lastProcesses)
 		procMsg := ""
-		if len(addedProcs) > 0 {
-			procMsg += "**增加的进程:**\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|-----|-----|------|-------|-----|------|-----|\n"
-			for _, p := range addedProcs {
-				procMsg += fmt.Sprintf("| %s | %d | %d | %s | %s | %s | %s |\n", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
+		if !equalProcessSlices(addedProcs, lastAddedProcs) || !equalProcessSlices(removedProcs, lastRemovedProcs) {
+			if len(addedProcs) > 0 {
+				procMsg += "**增加的进程:**\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|-----|-----|------|-------|-----|------|-----|\n"
+				for _, p := range addedProcs {
+					procMsg += fmt.Sprintf("| %s | %d | %d | %s | %s | %s | %s |\n", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
+				}
 			}
-		}
-		if len(removedProcs) > 0 {
-			procMsg += "**减少的进程:**\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|-----|-----|------|-------|-----|------|-----|\n"
-			for _, p := range removedProcs {
-				procMsg += fmt.Sprintf("| %s | %d | %d | %s | %s | %s | %s |\n", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
+			if len(removedProcs) > 0 {
+				procMsg += "**减少的进程:**\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|-----|-----|------|-------|-----|------|-----|\n"
+				for _, p := range removedProcs {
+					procMsg += fmt.Sprintf("| %s | %d | %d | %s | %s | %s | %s |\n", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
+				}
 			}
-		}
-		if procMsg != "" {
-			msgs = append(msgs, fmt.Sprintf("%s: 进程变更:\n%s", clusterPrefix, procMsg))
+			if procMsg != "" {
+				msgs = append(msgs, fmt.Sprintf("%s: 进程变更:\n%s", clusterPrefix, procMsg))
+				// Update current processes file
+				if err := saveProcesses(processCurrentFile, currentProcesses); err != nil {
+					slog.Error("Failed to save current processes", "error", err)
+					return []string{fmt.Sprintf("%s: Failed to save current processes: %v", clusterPrefix, err)}, err
+				}
+				// Update initial processes file to reset baseline
+				if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
+					slog.Error("Failed to update initial processes", "error", err)
+					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, err
+				}
+			}
 		}
 	}
 
@@ -134,7 +184,7 @@ func getCurrentUsers() ([]string, error) {
 	return users, nil
 }
 
-// loadInitialUsers loads initial users from file.
+// loadInitialUsers loads users from file.
 func loadInitialUsers(file string) ([]string, error) {
 	data, err := os.ReadFile(file)
 	if os.IsNotExist(err) {
@@ -220,7 +270,7 @@ func getCurrentProcesses() ([]ProcessInfo, error) {
 	return infos, nil
 }
 
-// loadInitialProcesses loads initial processes from file.
+// loadInitialProcesses loads processes from file.
 func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 	data, err := os.ReadFile(file)
 	if os.IsNotExist(err) {
@@ -300,4 +350,54 @@ func diffProcesses(current, initial []ProcessInfo) (added, removed []ProcessInfo
 		}
 	}
 	return
+}
+
+// equalStringSlices checks if two string slices are equal.
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sort.Strings(a)
+	sort.Strings(b)
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// equalProcessSlices checks if two ProcessInfo slices are equal.
+func equalProcessSlices(a, b []ProcessInfo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Sort processes by key for comparison
+	type processKey struct {
+		User, STIME, TTY, TIME, CMD string
+		PID, PPID                   int32
+	}
+	getKey := func(p ProcessInfo) processKey {
+		return processKey{p.User, p.STIME, p.TTY, p.TIME, p.CMD, p.PID, p.PPID}
+	}
+	keysA := make([]processKey, len(a))
+	keysB := make([]processKey, len(b))
+	for i, p := range a {
+		keysA[i] = getKey(p)
+	}
+	for i, p := range b {
+		keysB[i] = getKey(p)
+	}
+	sort.Slice(keysA, func(i, j int) bool {
+		return fmt.Sprintf("%v", keysA[i]) < fmt.Sprintf("%v", keysA[j])
+	})
+	sort.Slice(keysB, func(i, j int) bool {
+		return fmt.Sprintf("%v", keysB[i]) < fmt.Sprintf("%v", keysB[j])
+	})
+	for i := range keysA {
+		if keysA[i] != keysB[i] {
+			return false
+		}
+	}
+	return true
 }
