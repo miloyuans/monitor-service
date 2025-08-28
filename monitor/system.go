@@ -9,9 +9,10 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
-	"monitor-service/config"
+	"github.com/yourusername/monitor-service/config"
 )
 
 // UserInfo holds initial user information.
@@ -21,10 +22,13 @@ type UserInfo struct {
 
 // ProcessInfo holds process details.
 type ProcessInfo struct {
-	PID      int32  `json:"pid"`
-	Name     string `json:"name"`
-	Cmdline  string `json:"cmdline"`
-	Username string `json:"username"`
+	User  string `json:"user"`
+	PID   int32  `json:"pid"`
+	PPID  int32  `json:"ppid"`
+	STIME string `json:"stime"`
+	TTY   string `json:"tty"`
+	TIME  string `json:"time"`
+	CMD   string `json:"cmd"`
 }
 
 // System monitors system users and processes for changes.
@@ -52,15 +56,15 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		}
 	} else {
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
-		if len(addedUsers) > 0 || len(removedUsers) > 0 {
-			userMsg := fmt.Sprintf("%s: Users Change:\n", clusterPrefix)
-			if len(addedUsers) > 0 {
-				userMsg += fmt.Sprintf("Added users: %s\n", strings.Join(addedUsers, ", "))
-			}
-			if len(removedUsers) > 0 {
-				userMsg += fmt.Sprintf("Removed users: %s\n", strings.Join(removedUsers, ", "))
-			}
-			msgs = append(msgs, userMsg)
+		userMsg := ""
+		if len(addedUsers) > 0 {
+			userMsg += "**增加的用户:**\n" + strings.Join(addedUsers, "\n- ") + "\n"
+		}
+		if len(removedUsers) > 0 {
+			userMsg += "**减少的用户:**\n" + strings.Join(removedUsers, "\n- ") + "\n"
+		}
+		if userMsg != "" {
+			msgs = append(msgs, fmt.Sprintf("%s: 用户变更:\n%s", clusterPrefix, userMsg))
 		}
 	}
 
@@ -84,21 +88,21 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		}
 	} else {
 		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
-		if len(addedProcs) > 0 || len(removedProcs) > 0 {
-			procMsg := fmt.Sprintf("%s: Processes Change:\n\n| PID | Name | Cmdline | Username |\n|-----|------|---------|----------|\n", clusterPrefix)
-			if len(addedProcs) > 0 {
-				procMsg += "**Added Processes:**\n"
-				for _, p := range addedProcs {
-					procMsg += fmt.Sprintf("| %d | %s | %s | %s |\n", p.PID, p.Name, p.Cmdline, p.Username)
-				}
+		procMsg := ""
+		if len(addedProcs) > 0 {
+			procMsg += "**增加的进程:**\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|-----|-----|------|-------|-----|------|-----|\n"
+			for _, p := range addedProcs {
+				procMsg += fmt.Sprintf("| %s | %d | %d | %s | %s | %s | %s |\n", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
 			}
-			if len(removedProcs) > 0 {
-				procMsg += "**Removed Processes:**\n"
-				for _, p := range removedProcs {
-					procMsg += fmt.Sprintf("| %d | %s | %s | %s |\n", p.PID, p.Name, p.Cmdline, p.Username)
-				}
+		}
+		if len(removedProcs) > 0 {
+			procMsg += "**减少的进程:**\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|-----|-----|------|-------|-----|------|-----|\n"
+			for _, p := range removedProcs {
+				procMsg += fmt.Sprintf("| %s | %d | %d | %s | %s | %s | %s |\n", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
 			}
-			msgs = append(msgs, procMsg)
+		}
+		if procMsg != "" {
+			msgs = append(msgs, fmt.Sprintf("%s: 进程变更:\n%s", clusterPrefix, procMsg))
 		}
 	}
 
@@ -108,20 +112,19 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 	return nil, nil
 }
 
-// getCurrentUsers gets current logged-in users.
+// getCurrentUsers gets current system users from /etc/passwd.
 func getCurrentUsers() ([]string, error) {
-	out, err := exec.Command("who").Output()
+	data, err := os.ReadFile("/etc/passwd")
 	if err != nil {
-		slog.Error("Failed to execute 'who' command", "error", err)
 		return nil, err
 	}
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(string(data), "\n")
 	users := []string{}
 	for _, line := range lines {
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		fields := strings.Fields(line)
+		fields := strings.Split(line, ":")
 		if len(fields) > 0 {
 			users = append(users, fields[0])
 		}
@@ -137,12 +140,10 @@ func loadInitialUsers(file string) ([]string, error) {
 		return []string{}, nil
 	}
 	if err != nil {
-		slog.Error("Failed to read user file", "file", file, "error", err)
 		return nil, err
 	}
 	var info UserInfo
 	if err := json.Unmarshal(data, &info); err != nil {
-		slog.Error("Failed to unmarshal user data", "file", file, "error", err)
 		return nil, err
 	}
 	return info.Users, nil
@@ -153,33 +154,56 @@ func saveUsers(file string, users []string) error {
 	info := UserInfo{Users: users}
 	data, err := json.Marshal(info)
 	if err != nil {
-		slog.Error("Failed to marshal users", "error", err)
 		return err
 	}
-	if err := os.WriteFile(file, data, 0644); err != nil {
-		slog.Error("Failed to write user file", "file", file, "error", err)
-		return err
-	}
-	return nil
+	return os.WriteFile(file, data, 0644)
 }
 
 // getCurrentProcesses gets current processes info.
 func getCurrentProcesses() ([]ProcessInfo, error) {
 	procs, err := process.Processes()
 	if err != nil {
-		slog.Error("Failed to get processes", "error", err)
 		return nil, err
 	}
 	var infos []ProcessInfo
 	for _, p := range procs {
-		name, _ := p.Name()
-		cmdline, _ := p.Cmdline()
-		username, _ := p.Username()
+		user, err := p.Username()
+		if err != nil {
+			user = "?"
+		}
+		ppid, err := p.Ppid()
+		if err != nil {
+			ppid = 0
+		}
+		createTime, err := p.CreateTime()
+		if err != nil {
+			createTime = 0
+		}
+		stime := time.UnixMilli(createTime).Format("Jan 02 15:04")
+		tty, err := p.Terminal()
+		if err != nil {
+			tty = "?"
+		}
+		times, err := p.Times()
+		if err != nil {
+			times = &process.TimesStat{}
+		}
+		total := times.User + times.System
+		minutes := int(total) / 60
+		seconds := int(total) % 60
+		timeStr := fmt.Sprintf("%d:%02d", minutes, seconds)
+		cmd, err := p.Cmdline()
+		if err != nil {
+			cmd, _ = p.Name()
+		}
 		infos = append(infos, ProcessInfo{
-			PID:      p.Pid,
-			Name:     name,
-			Cmdline:  cmdline,
-			Username: username,
+			User:  user,
+			PID:   p.Pid,
+			PPID:  ppid,
+			STIME: stime,
+			TTY:   tty,
+			TIME:  timeStr,
+			CMD:   cmd,
 		})
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].PID < infos[j].PID })
@@ -193,12 +217,10 @@ func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 		return []ProcessInfo{}, nil
 	}
 	if err != nil {
-		slog.Error("Failed to read process file", "file", file, "error", err)
 		return nil, err
 	}
 	var infos []ProcessInfo
 	if err := json.Unmarshal(data, &infos); err != nil {
-		slog.Error("Failed to unmarshal process data", "file", file, "error", err)
 		return nil, err
 	}
 	return infos, nil
@@ -208,14 +230,9 @@ func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 func saveProcesses(file string, procs []ProcessInfo) error {
 	data, err := json.Marshal(procs)
 	if err != nil {
-		slog.Error("Failed to marshal processes", "error", err)
 		return err
 	}
-	if err := os.WriteFile(file, data, 0644); err != nil {
-		slog.Error("Failed to write process file", "file", file, "error", err)
-		return err
-	}
-	return nil
+	return os.WriteFile(file, data, 0644)
 }
 
 // diffStrings finds added and removed strings.
@@ -241,26 +258,26 @@ func diffStrings(current, initial []string) (added, removed []string) {
 	return
 }
 
-// diffProcesses finds added and removed processes (comparing by PID, Name, Cmdline, Username).
+// diffProcesses finds added and removed processes (comparing by all fields).
 func diffProcesses(current, initial []ProcessInfo) (added, removed []ProcessInfo) {
 	initialMap := make(map[string]bool)
 	for _, p := range initial {
-		key := fmt.Sprintf("%d:%s:%s:%s", p.PID, p.Name, p.Cmdline, p.Username)
+		key := fmt.Sprintf("%s:%d:%d:%s:%s:%s:%s", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
 		initialMap[key] = true
 	}
 	for _, p := range current {
-		key := fmt.Sprintf("%d:%s:%s:%s", p.PID, p.Name, p.Cmdline, p.Username)
+		key := fmt.Sprintf("%s:%d:%d:%s:%s:%s:%s", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
 		if !initialMap[key] {
 			added = append(added, p)
 		}
 	}
 	currentMap := make(map[string]bool)
 	for _, p := range current {
-		key := fmt.Sprintf("%d:%s:%s:%s", p.PID, p.Name, p.Cmdline, p.Username)
+		key := fmt.Sprintf("%s:%d:%d:%s:%s:%s:%s", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
 		currentMap[key] = true
 	}
 	for _, p := range initial {
-		key := fmt.Sprintf("%d:%s:%s:%s", p.PID, p.Name, p.Cmdline, p.Username)
+		key := fmt.Sprintf("%s:%d:%d:%s:%s:%s:%s", p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
 		if !currentMap[key] {
 			removed = append(removed, p)
 		}
