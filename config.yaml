@@ -1,5 +1,5 @@
 monitoring:
-  enabled: false
+  enabled: true
 telegram:
   bot_token: "your_bot_token"
   chat_id: 123456789
