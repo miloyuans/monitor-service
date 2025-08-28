@@ -6,29 +6,29 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 
 	"monitor-service/config"
 	"golang.org/x/net/http2"
+
 )
 
 // Nacos checks the Nacos service health.
 func Nacos(ctx context.Context, cfg config.NacosConfig, clusterName string) (string, error) {
 	url := cfg.Address + "/nacos/v1/ns/health"
-	client := &http2.Client{}
-	req, err := client.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		slog.Error("Failed to create Nacos request", "url", url, "error", err)
 		return fmt.Sprintf("**Nacos (%s)**: Request creation failed: %v", clusterName, err), err
 	}
-	req = req.WithContext(ctx)
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Error("Failed to get Nacos health", "url", url, "error", err)
 		return fmt.Sprintf("**Nacos (%s)**: Get failed: %v", clusterName, err), err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		slog.Error("Nacos returned non-OK status", "url", url, "status", resp.StatusCode)
 		return fmt.Sprintf("**Nacos (%s)**: Status %d", clusterName, resp.StatusCode), fmt.Errorf("unhealthy")
 	}
