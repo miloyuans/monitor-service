@@ -17,8 +17,8 @@ import (
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/process"
-	"github.com/yourusername/monitor-service/alert"
-	"github.com/yourusername/monitor-service/config"
+	"monitor-service/alert"
+	"monitor-service/config"
 )
 
 // UserInfo holds user information.
