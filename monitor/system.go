@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sort"
@@ -35,15 +36,18 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 	userFile := ".userNumber"
 	initialUsers, err := loadInitialUsers(userFile)
 	if err != nil {
+		slog.Error("Failed to load initial users", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, err
 	}
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
+		slog.Error("Failed to get current users", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, err
 	}
 	if len(initialUsers) == 0 {
 		// First run, save initial
 		if err := saveUsers(userFile, currentUsers); err != nil {
+			slog.Error("Failed to save initial users", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, err
 		}
 	} else {
@@ -64,15 +68,18 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 	processFile := ".psAll"
 	initialProcesses, err := loadInitialProcesses(processFile)
 	if err != nil {
+		slog.Error("Failed to load initial processes", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, err
 	}
 	currentProcesses, err := getCurrentProcesses()
 	if err != nil {
+		slog.Error("Failed to get current processes", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, err
 	}
 	if len(initialProcesses) == 0 {
 		// First run, save initial
 		if err := saveProcesses(processFile, currentProcesses); err != nil {
+			slog.Error("Failed to save initial processes", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, err
 		}
 	} else {
@@ -105,6 +112,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 func getCurrentUsers() ([]string, error) {
 	out, err := exec.Command("who").Output()
 	if err != nil {
+		slog.Error("Failed to execute 'who' command", "error", err)
 		return nil, err
 	}
 	lines := strings.Split(string(out), "\n")
@@ -129,10 +137,12 @@ func loadInitialUsers(file string) ([]string, error) {
 		return []string{}, nil
 	}
 	if err != nil {
+		slog.Error("Failed to read user file", "file", file, "error", err)
 		return nil, err
 	}
 	var info UserInfo
 	if err := json.Unmarshal(data, &info); err != nil {
+		slog.Error("Failed to unmarshal user data", "file", file, "error", err)
 		return nil, err
 	}
 	return info.Users, nil
@@ -143,15 +153,21 @@ func saveUsers(file string, users []string) error {
 	info := UserInfo{Users: users}
 	data, err := json.Marshal(info)
 	if err != nil {
+		slog.Error("Failed to marshal users", "error", err)
 		return err
 	}
-	return os.WriteFile(file, data, 0644)
+	if err := os.WriteFile(file, data, 0644); err != nil {
+		slog.Error("Failed to write user file", "file", file, "error", err)
+		return err
+	}
+	return nil
 }
 
 // getCurrentProcesses gets current processes info.
 func getCurrentProcesses() ([]ProcessInfo, error) {
 	procs, err := process.Processes()
 	if err != nil {
+		slog.Error("Failed to get processes", "error", err)
 		return nil, err
 	}
 	var infos []ProcessInfo
@@ -177,10 +193,12 @@ func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 		return []ProcessInfo{}, nil
 	}
 	if err != nil {
+		slog.Error("Failed to read process file", "file", file, "error", err)
 		return nil, err
 	}
 	var infos []ProcessInfo
 	if err := json.Unmarshal(data, &infos); err != nil {
+		slog.Error("Failed to unmarshal process data", "file", file, "error", err)
 		return nil, err
 	}
 	return infos, nil
@@ -190,9 +208,14 @@ func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 func saveProcesses(file string, procs []ProcessInfo) error {
 	data, err := json.Marshal(procs)
 	if err != nil {
+		slog.Error("Failed to marshal processes", "error", err)
 		return err
 	}
-	return os.WriteFile(file, data, 0644)
+	if err := os.WriteFile(file, data, 0644); err != nil {
+		slog.Error("Failed to write process file", "file", file, "error", err)
+		return err
+	}
+	return nil
 }
 
 // diffStrings finds added and removed strings.

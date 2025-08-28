@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -22,12 +23,14 @@ func Redis(ctx context.Context, cfg config.RedisConfig, clusterName string) ([]s
 
 	pong, err := client.Ping(ctx).Result()
 	if err != nil || pong != "PONG" {
+		slog.Error("Failed to ping Redis", "addr", cfg.Addr, "error", err)
 		return []string{fmt.Sprintf("%s: Connection failed: %v", clusterPrefix, err)}, err
 	}
 
 	// Check nodes.
 	nodes, err := client.ClusterNodes(ctx).Result()
 	if err != nil {
+		slog.Error("Failed to get Redis cluster nodes", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get cluster nodes: %v", clusterPrefix, err)}, err
 	}
 	lines := strings.Split(nodes, "\n")
@@ -50,6 +53,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, clusterName string) ([]s
 	// Check slots.
 	slots, err := client.ClusterSlots(ctx).Result()
 	if err != nil {
+		slog.Error("Failed to get Redis cluster slots", "error", err)
 		msgs = append(msgs, fmt.Sprintf("%s: Failed to get cluster slots: %v", clusterPrefix, err))
 	} else {
 		covered := 0
@@ -70,6 +74,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, clusterName string) ([]s
 			var err error
 			keys, cursor, err = master.Scan(ctx, cursor, "*", 100).Result()
 			if err != nil {
+				slog.Error("Failed to scan Redis keys", "error", err)
 				return err
 			}
 			for _, key := range keys {
@@ -85,6 +90,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, clusterName string) ([]s
 		return nil
 	})
 	if err != nil {
+		slog.Error("Failed to scan for big keys", "error", err)
 		msgs = append(msgs, fmt.Sprintf("%s: Failed to scan for big keys: %v", clusterPrefix, err))
 	}
 	if len(bigKeys) > 0 {

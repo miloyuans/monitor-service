@@ -1,24 +1,25 @@
 package config
 
 import (
-	"fmt"
+	"log/slog"
+
 	"github.com/spf13/viper"
 )
 
 // Config holds the application configuration.
 type Config struct {
-	Monitoring        MonitoringConfig `mapstructure:"monitoring"`
-	Telegram         TelegramConfig  `mapstructure:"telegram"`
-	RabbitMQ         RabbitMQConfig  `mapstructure:"rabbitmq"`
-	Redis            RedisConfig     `mapstructure:"redis"`
-	MySQL            MySQLConfig     `mapstructure:"mysql"`
-	Nacos            NacosConfig     `mapstructure:"nacos"`
-	HostMonitoring   HostConfig      `mapstructure:"host_monitoring"`
-	SystemMonitoring SystemConfig    `mapstructure:"system_monitoring"`
-	ClusterName       string         `mapstructure:"cluster_name"`
-	ShowHostname      bool           `mapstructure:"show_hostname"`
-	AlertSilenceDuration int         `mapstructure:"alert_silence_duration"`
-	CheckInterval        string      `mapstructure:"check_interval"`
+	Monitoring           MonitoringConfig `mapstructure:"monitoring"`
+	Telegram            TelegramConfig   `mapstructure:"telegram"`
+	RabbitMQ            RabbitMQConfig   `mapstructure:"rabbitmq"`
+	Redis               RedisConfig      `mapstructure:"redis"`
+	MySQL               MySQLConfig      `mapstructure:"mysql"`
+	Nacos               NacosConfig      `mapstructure:"nacos"`
+	HostMonitoring      HostConfig       `mapstructure:"host_monitoring"`
+	SystemMonitoring    SystemConfig     `mapstructure:"system_monitoring"`
+	ClusterName         string           `mapstructure:"cluster_name"`
+	ShowHostname        bool             `mapstructure:"show_hostname"`
+	AlertSilenceDuration int           `mapstructure:"alert_silence_duration"`
+	CheckInterval       string           `mapstructure:"check_interval"`
 }
 
 // MonitoringConfig holds general monitoring settings.
@@ -66,12 +67,12 @@ type NacosConfig struct {
 
 // HostConfig holds host monitoring configuration.
 type HostConfig struct {
-	Enabled          bool    `mapstructure:"enabled"`
-	CPUThreshold     float64 `mapstructure:"cpu_threshold"`
-	MemThreshold     float64 `mapstructure:"mem_threshold"`
-	DiskThreshold    float64 `mapstructure:"disk_threshold"`
-	NetIOThreshold   float64 `mapstructure:"net_io_threshold"`  // GB/s
-	DiskIOThreshold  float64 `mapstructure:"disk_io_threshold"` // GB/s
+	Enabled         bool    `mapstructure:"enabled"`
+	CPUThreshold    float64 `mapstructure:"cpu_threshold"`
+	MemThreshold    float64 `mapstructure:"mem_threshold"`
+	DiskThreshold   float64 `mapstructure:"disk_threshold"`
+	NetIOThreshold  float64 `mapstructure:"net_io_threshold"`  // GB/s
+	DiskIOThreshold float64 `mapstructure:"disk_io_threshold"` // GB/s
 }
 
 // SystemConfig holds system monitoring configuration.
@@ -85,10 +86,12 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetConfigFile(path)
 	viper.SetConfigType("yaml")
 	if err := viper.ReadInConfig(); err != nil {
-		return cfg, fmt.Errorf("failed to read config: %w", err)
+		slog.Error("Failed to read config", "error", err)
+		return cfg, err
 	}
 	if err := viper.Unmarshal(&cfg); err != nil {
-		return cfg, fmt.Errorf("failed to unmarshal config: %w", err)
+		slog.Error("Failed to unmarshal config", "error", err)
+		return cfg, err
 	}
 	return cfg, nil
 }

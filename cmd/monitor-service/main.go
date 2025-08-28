@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
+	"context"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -12,7 +12,6 @@ import (
 	"monitor-service/config"
 	"monitor-service/monitor"
 	"monitor-service/util"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -21,63 +20,58 @@ var (
 	checkInterval   time.Duration
 	ctx             context.Context
 	cancel          context.CancelFunc
+	logger          *slog.Logger
 )
 
 func main() {
-	// Initialize context with cancellation support.
+	// Initialize logger with JSON handler for Log4j-style output
+	logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelInfo,
+	}))
+
+	// Initialize context with cancellation support
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
 
-	// Load configuration.
+	// Load configuration
 	cfg, err := config.LoadConfig("/app/config.yaml")
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
+		logger.Error("Error loading config", "error", err)
 		os.Exit(1)
 	}
 
 	if !cfg.Monitoring.Enabled {
-		fmt.Println("Monitoring is disabled.")
+		logger.Info("Monitoring is disabled")
 		os.Exit(0)
 	}
 
-	// Parse duration settings.
+	// Parse duration settings
 	silenceDuration = time.Duration(cfg.AlertSilenceDuration) * time.Minute
 	checkInterval, err = time.ParseDuration(cfg.CheckInterval)
 	if err != nil {
-		fmt.Printf("Invalid check_interval: %v\n", err)
+		logger.Error("Invalid check_interval", "error", err)
 		os.Exit(1)
 	}
 
-	// Initialize alert system (Telegram bot).
+	// Initialize alert system (Telegram bot)
 	alertBot, err := alert.NewAlertBot(cfg.Telegram.BotToken, cfg.Telegram.ChatID, cfg.ClusterName, cfg.ShowHostname)
 	if err != nil {
-		fmt.Printf("Error creating Telegram bot: %v\n", err)
+		logger.Error("Error creating Telegram bot", "error", err)
 		os.Exit(1)
 	}
 
-	// Start HTTP server for health checks.
-	go func() {
-		http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "OK")
-		})
-		if err := http.ListenAndServe(":8080", nil); err != nil {
-			fmt.Printf("Error starting HTTP server: %v\n", err)
-			os.Exit(1)
-		}
-	}()
-
-	// Check if any monitoring is enabled.
+	// Check if any monitoring is enabled
 	anyMonitoringEnabled := cfg.RabbitMQ.Enabled || cfg.Redis.Enabled || cfg.MySQL.Enabled || cfg.Nacos.Enabled || cfg.HostMonitoring.Enabled || cfg.SystemMonitoring.Enabled
 
-	// Start monitoring loop.
+	// Start monitoring loop
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			if !anyMonitoringEnabled {
-				fmt.Println("无所事事")
+				logger.Info("无所事事")
 				continue
 			}
 			messages := []string{}
@@ -116,7 +110,7 @@ func main() {
 				alertMsg := strings.Join(messages, "\n\n")
 				hash, err := util.MD5Hash(alertMsg)
 				if err != nil {
-					fmt.Printf("Error hashing alert message: %v\n", err)
+					logger.Error("Error hashing alert message", "error", err)
 					continue
 				}
 				last, ok := alertLastSent.Load(hash)
@@ -126,7 +120,7 @@ func main() {
 				}
 			}
 		case <-ctx.Done():
-			fmt.Println("Shutting down monitoring loop")
+			logger.Info("Shutting down monitoring loop")
 			return
 		}
 	}

@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -20,6 +21,7 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 	// CPU usage
 	cpuPercents, err := cpu.Percent(0, false)
 	if err != nil {
+		slog.Error("Failed to get CPU usage", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get CPU usage: %v", clusterPrefix, err)}, err
 	}
 	cpuAvg := 0.0
@@ -34,6 +36,7 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 	// Memory usage
 	vm, err := mem.VirtualMemory()
 	if err != nil {
+		slog.Error("Failed to get memory usage", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get memory usage: %v", clusterPrefix, err)}, err
 	}
 	if vm.UsedPercent > cfg.MemThreshold {
@@ -43,6 +46,7 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 	// Disk usage (root)
 	du, err := disk.Usage("/")
 	if err != nil {
+		slog.Error("Failed to get disk usage", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get disk usage: %v", clusterPrefix, err)}, err
 	}
 	if du.UsedPercent > cfg.DiskThreshold {
@@ -53,11 +57,13 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 	const bytesToGB = 1.0 / (1024 * 1024 * 1024) // 1 GB = 10^9 bytes
 	netIO1, err := net.IOCounters(false)
 	if err != nil {
+		slog.Error("Failed to get network IO", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, err
 	}
 	time.Sleep(1 * time.Second)
 	netIO2, err := net.IOCounters(false)
 	if err != nil {
+		slog.Error("Failed to get network IO", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, err
 	}
 	netBytesSent := float64(netIO2[0].BytesSent-netIO1[0].BytesSent) * bytesToGB
@@ -70,11 +76,13 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 	// Disk IO rate (in GB/s)
 	diskIO1, err := disk.IOCounters()
 	if err != nil {
+		slog.Error("Failed to get disk IO", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get disk IO: %v", clusterPrefix, err)}, err
 	}
 	time.Sleep(1 * time.Second)
 	diskIO2, err := disk.IOCounters()
 	if err != nil {
+		slog.Error("Failed to get disk IO", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get disk IO: %v", clusterPrefix, err)}, err
 	}
 	var diskRead, diskWrite float64

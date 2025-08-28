@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -14,6 +15,7 @@ import (
 func MySQL(ctx context.Context, cfg config.MySQLConfig, clusterName string) ([]string, error) {
 	db, err := sql.Open("mysql", cfg.DSN)
 	if err != nil {
+		slog.Error("Failed to open MySQL connection", "dsn", cfg.DSN, "error", err)
 		return []string{fmt.Sprintf("**MySQL (%s)**: Open failed: %v", clusterName, err)}, err
 	}
 	defer db.Close()
@@ -22,6 +24,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, clusterName string) ([]s
 	msgs := []string{}
 
 	if err := db.PingContext(ctx); err != nil {
+		slog.Error("Failed to ping MySQL", "dsn", cfg.DSN, "error", err)
 		return []string{fmt.Sprintf("%s: Ping failed: %v", clusterPrefix, err)}, err
 	}
 
