@@ -85,13 +85,16 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		slog.Error("Failed to get current users", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, err
 	}
+	slog.Debug("Retrieved current users", "count", len(currentUsers))
 	initialUsers, err := loadInitialUsers(userInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial users", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, err
 	}
+	slog.Debug("Loaded initial users", "count", len(initialUsers))
 	if len(initialUsers) == 0 {
 		// First run, save initial
+		slog.Info("First run: initializing user file")
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
 			slog.Error("Failed to save initial users", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, err
@@ -107,6 +110,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 				userMsg += "**减少的用户:**\n- " + strings.Join(removedUsers, "\n- ") + "\n"
 			}
 			if userMsg != "" {
+				slog.Info("Generating user change alert", "added", len(addedUsers), "removed", len(removedUsers))
 				msgs = append(msgs, fmt.Sprintf("%s: 用户变更:\n%s", clusterPrefix, userMsg))
 				// Log change incrementally
 				if err := logChange(changeLogFile, "user", addedUsers, removedUsers); err != nil {
@@ -119,6 +123,8 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, err
 				}
 			}
+		} else {
+			slog.Debug("No user changes detected", "added", len(addedUsers), "removed", len(removedUsers))
 		}
 	}
 
@@ -129,13 +135,16 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		slog.Error("Failed to get current processes", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, err
 	}
+	slog.Debug("Retrieved current processes", "count", len(currentProcesses))
 	initialProcesses, err := loadInitialProcesses(processInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial processes", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, err
 	}
+	slog.Debug("Loaded initial processes", "count", len(initialProcesses))
 	if len(initialProcesses) == 0 {
 		// First run, save initial
+		slog.Info("First run: initializing process file")
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 			slog.Error("Failed to save initial processes", "error", err)
 			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, err
@@ -157,6 +166,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 				}
 			}
 			if procMsg != "" {
+				slog.Info("Generating process change alert", "added", len(addedProcs), "removed", len(removedProcs))
 				msgs = append(msgs, fmt.Sprintf("%s: 进程变更:\n%s", clusterPrefix, procMsg))
 				// Log change incrementally
 				if err := logChange(changeLogFile, "process", addedProcs, removedProcs); err != nil {
@@ -169,6 +179,8 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, err
 				}
 			}
+		} else {
+			slog.Debug("No process changes detected", "added", len(addedProcs), "removed", len(removedProcs))
 		}
 	}
 
@@ -188,11 +200,39 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 
 // logChange appends a change entry to the log file.
 func logChange(file string, changeType string, added, removed any) error {
+	var addedSlice, removedSlice []any
+	switch changeType {
+	case "user":
+		if a, ok := added.([]string); ok {
+			for _, v := range a {
+				addedSlice = append(addedSlice, v)
+			}
+		}
+		if r, ok := removed.([]string); ok {
+			for _, v := range r {
+				removedSlice = append(removedSlice, v)
+			}
+		}
+	case "process":
+		if a, ok := added.([]ProcessInfo); ok {
+			for _, v := range a {
+				addedSlice = append(addedSlice, v)
+			}
+		}
+		if r, ok := removed.([]ProcessInfo); ok {
+			for _, v := range r {
+				removedSlice = append(removedSlice, v)
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported change type: %s", changeType)
+	}
+
 	entry := ChangeLogEntry{
 		Timestamp: time.Now(),
 		Type:      changeType,
-		Added:     added,
-		Removed:   removed,
+		Added:     addedSlice,
+		Removed:   removedSlice,
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
@@ -210,7 +250,7 @@ func logChange(file string, changeType string, added, removed any) error {
 		slog.Error("Failed to write change entry", "file", file, "error", err)
 		return err
 	}
-	slog.Info("Logged change entry", "type", changeType, "added", len(added.([]any)), "removed", len(removed.([]any)))
+	slog.Info("Logged change entry", "type", changeType, "added", len(addedSlice), "removed", len(removedSlice))
 	return nil
 }
 
@@ -266,6 +306,7 @@ func saveUsers(file string, users []string) error {
 		slog.Error("Failed to write user file", "file", file, "error", err)
 		return err
 	}
+	slog.Debug("Saved users to file", "file", file, "count", len(users))
 	return nil
 }
 
@@ -281,19 +322,23 @@ func getCurrentProcesses() ([]ProcessInfo, error) {
 		user, err := p.Username()
 		if err != nil {
 			user = "?"
+			slog.Warn("Failed to get username for process", "pid", p.Pid, "error", err)
 		}
 		ppid, err := p.Ppid()
 		if err != nil {
 			ppid = 0
+			slog.Warn("Failed to get ppid for process", "pid", p.Pid, "error", err)
 		}
 		createTime, err := p.CreateTime()
 		if err != nil {
 			createTime = 0
+			slog.Warn("Failed to get create time for process", "pid", p.Pid, "error", err)
 		}
 		stime := time.UnixMilli(createTime).Format("Jan 02 15:04")
 		tty, err := p.Terminal()
 		if err != nil {
 			tty = "?"
+			slog.Warn("Failed to get terminal for process", "pid", p.Pid, "error", err)
 		}
 		times, err := p.Times()
 		if err != nil {
@@ -307,6 +352,7 @@ func getCurrentProcesses() ([]ProcessInfo, error) {
 		cmd, err := p.Cmdline()
 		if err != nil {
 			cmd, _ = p.Name()
+			slog.Warn("Failed to get cmdline for process, using name", "pid", p.Pid, "error", err)
 		}
 		infos = append(infos, ProcessInfo{
 			User:  user,
@@ -351,6 +397,7 @@ func saveProcesses(file string, procs []ProcessInfo) error {
 		slog.Error("Failed to write process file", "file", file, "error", err)
 		return err
 	}
+	slog.Debug("Saved processes to file", "file", file, "count", len(procs))
 	return nil
 }
 
@@ -408,6 +455,7 @@ func diffProcesses(current, initial []ProcessInfo) (added, removed []ProcessInfo
 func shouldCleanup(lastCleanupFile string, interval time.Duration) bool {
 	data, err := os.ReadFile(lastCleanupFile)
 	if os.IsNotExist(err) {
+		slog.Debug("Cleanup file does not exist, triggering cleanup", "file", lastCleanupFile)
 		return true
 	}
 	if err != nil {
@@ -433,6 +481,7 @@ func updateLastCleanup(lastCleanupFile string) error {
 		slog.Error("Failed to write last cleanup file", "file", lastCleanupFile, "error", err)
 		return err
 	}
+	slog.Debug("Updated last cleanup time", "file", lastCleanupFile)
 	return nil
 }
 
@@ -467,9 +516,9 @@ func cleanupHistoricalFiles(retentionPeriod time.Duration) error {
 }
 
 // reinitializeSystemMonitoring archives old files and reinitializes monitoring.
-func reinitializeSystemMonitoring(userInitialFile, processInitialFile string, currentUsers []string, currentProcesses []ProcessInfo) error {
+func reinitializeSystemMonitoring(userInitialFile, processInitialFile string, currentUsers []string, currentProcesses []ProcessInfo, changeLogFile string) error {
 	timestamp := time.Now().Format("20060102_150405")
-	filesToArchive := []string{userInitialFile, processInitialFile}
+	filesToArchive := []string{userInitialFile, processInitialFile, changeLogFile}
 
 	// Create tar.gz archive
 	archiveFile := fmt.Sprintf("archive_%s.tar.gz", timestamp)
@@ -522,6 +571,11 @@ func reinitializeSystemMonitoring(userInitialFile, processInitialFile string, cu
 	}
 	if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 		slog.Error("Failed to reinitialize process initial file", "file", processInitialFile, "error", err)
+		return err
+	}
+	// Create empty change log file
+	if err := os.WriteFile(changeLogFile, []byte{}, 0644); err != nil {
+		slog.Error("Failed to create empty change log file", "file", changeLogFile, "error", err)
 		return err
 	}
 	slog.Info("Reinitialized system monitoring files")
