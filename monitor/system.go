@@ -1,11 +1,15 @@
 package monitor
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -36,18 +40,46 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 	msgs := []string{}
 	clusterPrefix := fmt.Sprintf("**System (%s)**", clusterName)
 
+	// File size limit (500 MB)
+	const maxFileSize = 500 * 1024 * 1024 // 500 MB in bytes
+	// Files to check
+	filesToCheck := []string{".userNumber", ".currentUsers", ".psAll", ".currentProcesses"}
+
+	// Check and cleanup historical files every 30 days
+	lastCleanupFile := ".lastCleanup"
+	if shouldCleanup(lastCleanupFile, 30*24*time.Hour) {
+		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
+			slog.Error("Failed to cleanup historical files", "error", err)
+			return []string{fmt.Sprintf("%s: Failed to cleanup historical files: %v", clusterPrefix, err)}, err
+		}
+		if err := updateLastCleanup(lastCleanupFile); err != nil {
+			slog.Error("Failed to update last cleanup time", "error", err)
+			return []string{fmt.Sprintf("%s: Failed to update last cleanup time: %v", clusterPrefix, err)}, err
+		}
+	}
+
+	// Check file sizes and reinitialize if needed
+	needsReinit := false
+	for _, file := range filesToCheck {
+		info, err := os.Stat(file)
+		if err == nil && info.Size() > maxFileSize {
+			needsReinit = true
+			break
+		}
+	}
+
 	// Monitor users
 	userInitialFile := ".userNumber"
 	userCurrentFile := ".currentUsers"
-	initialUsers, err := loadInitialUsers(userInitialFile)
-	if err != nil {
-		slog.Error("Failed to load initial users", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, err
-	}
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
 		slog.Error("Failed to get current users", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, err
+	}
+	initialUsers, err := loadInitialUsers(userInitialFile)
+	if err != nil {
+		slog.Error("Failed to load initial users", "error", err)
+		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, err
 	}
 	if len(initialUsers) == 0 {
 		// First run, save initial and current
@@ -96,15 +128,15 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 	// Monitor processes
 	processInitialFile := ".psAll"
 	processCurrentFile := ".currentProcesses"
-	initialProcesses, err := loadInitialProcesses(processInitialFile)
-	if err != nil {
-		slog.Error("Failed to load initial processes", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, err
-	}
 	currentProcesses, err := getCurrentProcesses()
 	if err != nil {
 		slog.Error("Failed to get current processes", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, err
+	}
+	initialProcesses, err := loadInitialProcesses(processInitialFile)
+	if err != nil {
+		slog.Error("Failed to load initial processes", "error", err)
+		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, err
 	}
 	if len(initialProcesses) == 0 {
 		// First run, save initial and current
@@ -153,6 +185,14 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, err
 				}
 			}
+		}
+	}
+
+	// Reinitialize if file size exceeds limit and no alerts
+	if needsReinit && len(msgs) == 0 {
+		if err := reinitializeSystemMonitoring(userInitialFile, userCurrentFile, processInitialFile, processCurrentFile, currentUsers, currentProcesses); err != nil {
+			slog.Error("Failed to reinitialize system monitoring", "error", err)
+			return []string{fmt.Sprintf("%s: Failed to reinitialize system monitoring: %v", clusterPrefix, err)}, err
 		}
 	}
 
@@ -357,10 +397,14 @@ func equalStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	sort.Strings(a)
-	sort.Strings(b)
-	for i := range a {
-		if a[i] != b[i] {
+	aCopy := make([]string, len(a))
+	bCopy := make([]string, len(b))
+	copy(aCopy, a)
+	copy(bCopy, b)
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	for i := range aCopy {
+		if aCopy[i] != bCopy[i] {
 			return false
 		}
 	}
@@ -400,4 +444,136 @@ func equalProcessSlices(a, b []ProcessInfo) bool {
 		}
 	}
 	return true
+}
+
+// shouldCleanup checks if cleanup is needed based on last cleanup time.
+func shouldCleanup(lastCleanupFile string, interval time.Duration) bool {
+	data, err := os.ReadFile(lastCleanupFile)
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil {
+		slog.Error("Failed to read last cleanup file", "file", lastCleanupFile, "error", err)
+		return true
+	}
+	var lastCleanup time.Time
+	if err := json.Unmarshal(data, &lastCleanup); err != nil {
+		slog.Error("Failed to unmarshal last cleanup time", "file", lastCleanupFile, "error", err)
+		return true
+	}
+	return time.Since(lastCleanup) >= interval
+}
+
+// updateLastCleanup updates the last cleanup timestamp.
+func updateLastCleanup(lastCleanupFile string) error {
+	data, err := json.Marshal(time.Now())
+	if err != nil {
+		slog.Error("Failed to marshal last cleanup time", "error", err)
+		return err
+	}
+	if err := os.WriteFile(lastCleanupFile, data, 0644); err != nil {
+		slog.Error("Failed to write last cleanup file", "file", lastCleanupFile, "error", err)
+		return err
+	}
+	return nil
+}
+
+// cleanupHistoricalFiles removes compressed files older than retention period.
+func cleanupHistoricalFiles(retentionPeriod time.Duration) error {
+	now := time.Now()
+	files, err := filepath.Glob("*.[0-9]{8}_[0-9]{6}.tar.gz")
+	if err != nil {
+		slog.Error("Failed to glob historical files", "error", err)
+		return err
+	}
+	re := regexp.MustCompile(`\.(\d{8})_(\d{6})\.tar\.gz$`)
+	for _, file := range files {
+		matches := re.FindStringSubmatch(file)
+		if len(matches) != 3 {
+			continue
+		}
+		t, err := time.Parse("20060102_150405", matches[1]+"_"+matches[2])
+		if err != nil {
+			slog.Warn("Failed to parse timestamp in filename", "file", file, "error", err)
+			continue
+		}
+		if now.Sub(t) > retentionPeriod {
+			if err := os.Remove(file); err != nil {
+				slog.Error("Failed to remove historical file", "file", file, "error", err)
+				continue
+			}
+			slog.Info("Removed historical file", "file", file)
+		}
+	}
+	return nil
+}
+
+// reinitializeSystemMonitoring archives old files and reinitializes monitoring.
+func reinitializeSystemMonitoring(userInitialFile, userCurrentFile, processInitialFile, processCurrentFile string, currentUsers []string, currentProcesses []ProcessInfo) error {
+	timestamp := time.Now().Format("20060102_150405")
+	filesToArchive := []string{userInitialFile, userCurrentFile, processInitialFile, processCurrentFile}
+
+	// Create tar.gz archive
+	archiveFile := fmt.Sprintf("archive_%s.tar.gz", timestamp)
+	f, err := os.Create(archiveFile)
+	if err != nil {
+		slog.Error("Failed to create archive file", "file", archiveFile, "error", err)
+		return err
+	}
+	defer f.Close()
+
+	gw := gzip.NewWriter(f)
+	defer gw.Close()
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	for _, file := range filesToArchive {
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			continue
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			slog.Error("Failed to read file for archiving", "file", file, "error", err)
+			continue
+		}
+		hdr := &tar.Header{
+			Name:    file + "." + timestamp,
+			Mode:    0644,
+			Size:    int64(len(data)),
+			ModTime: time.Now(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			slog.Error("Failed to write tar header", "file", file, "error", err)
+			continue
+		}
+		if _, err := tw.Write(data); err != nil {
+			slog.Error("Failed to write file to archive", "file", file, "error", err)
+			continue
+		}
+		if err := os.Remove(file); err != nil {
+			slog.Error("Failed to remove old file", "file", file, "error", err)
+			continue
+		}
+		slog.Info("Archived and removed file", "file", file, "archive", archiveFile)
+	}
+
+	// Reinitialize files with current data
+	if err := saveUsers(userInitialFile, currentUsers); err != nil {
+		slog.Error("Failed to reinitialize user initial file", "file", userInitialFile, "error", err)
+		return err
+	}
+	if err := saveUsers(userCurrentFile, currentUsers); err != nil {
+		slog.Error("Failed to reinitialize user current file", "file", userCurrentFile, "error", err)
+		return err
+	}
+	if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
+		slog.Error("Failed to reinitialize process initial file", "file", processInitialFile, "error", err)
+		return err
+	}
+	if err := saveProcesses(processCurrentFile, currentProcesses); err != nil {
+		slog.Error("Failed to reinitialize process current file", "file", processCurrentFile, "error", err)
+		return err
+	}
+	slog.Info("Reinitialized system monitoring files")
+	return nil
 }
