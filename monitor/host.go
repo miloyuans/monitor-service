@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -16,7 +17,17 @@ import (
 // Host monitors host resources and returns alerts if thresholds are exceeded.
 func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]string, error) {
 	hasIssue := false
-	statusLines := []string{}
+	statusLines := []string{
+		fmt.Sprintf("服务环境: %s", clusterName),
+	}
+
+	// Hostname
+	hostname, err := os.Hostname()
+	if err != nil {
+		slog.Warn("Failed to get hostname", "error", err)
+		hostname = "unknown"
+	}
+	statusLines = append(statusLines, fmt.Sprintf("主机名: %s", hostname))
 
 	// CPU usage
 	cpuPercents, err := cpu.Percent(0, false)

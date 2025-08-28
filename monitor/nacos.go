@@ -9,8 +9,6 @@ import (
 	"net/http"
 
 	"monitor-service/config"
-	"golang.org/x/net/http2"
-
 )
 
 // Nacos checks the Nacos service health.

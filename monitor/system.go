@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -58,10 +57,10 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
 		userMsg := ""
 		if len(addedUsers) > 0 {
-			userMsg += "**增加的用户:**\n" + strings.Join(addedUsers, "\n- ") + "\n"
+			userMsg += "**增加的用户:**\n- " + strings.Join(addedUsers, "\n- ") + "\n"
 		}
 		if len(removedUsers) > 0 {
-			userMsg += "**减少的用户:**\n" + strings.Join(removedUsers, "\n- ") + "\n"
+			userMsg += "**减少的用户:**\n- " + strings.Join(removedUsers, "\n- ") + "\n"
 		}
 		if userMsg != "" {
 			msgs = append(msgs, fmt.Sprintf("%s: 用户变更:\n%s", clusterPrefix, userMsg))
@@ -116,6 +115,7 @@ func System(ctx context.Context, cfg config.SystemConfig, clusterName string) ([
 func getCurrentUsers() ([]string, error) {
 	data, err := os.ReadFile("/etc/passwd")
 	if err != nil {
+		slog.Error("Failed to read /etc/passwd", "error", err)
 		return nil, err
 	}
 	lines := strings.Split(string(data), "\n")
@@ -140,10 +140,12 @@ func loadInitialUsers(file string) ([]string, error) {
 		return []string{}, nil
 	}
 	if err != nil {
+		slog.Error("Failed to read user file", "file", file, "error", err)
 		return nil, err
 	}
 	var info UserInfo
 	if err := json.Unmarshal(data, &info); err != nil {
+		slog.Error("Failed to unmarshal user data", "file", file, "error", err)
 		return nil, err
 	}
 	return info.Users, nil
@@ -154,15 +156,21 @@ func saveUsers(file string, users []string) error {
 	info := UserInfo{Users: users}
 	data, err := json.Marshal(info)
 	if err != nil {
+		slog.Error("Failed to marshal users", "error", err)
 		return err
 	}
-	return os.WriteFile(file, data, 0644)
+	if err := os.WriteFile(file, data, 0644); err != nil {
+		slog.Error("Failed to write user file", "file", file, "error", err)
+		return err
+	}
+	return nil
 }
 
 // getCurrentProcesses gets current processes info.
 func getCurrentProcesses() ([]ProcessInfo, error) {
 	procs, err := process.Processes()
 	if err != nil {
+		slog.Error("Failed to get processes", "error", err)
 		return nil, err
 	}
 	var infos []ProcessInfo
@@ -186,7 +194,8 @@ func getCurrentProcesses() ([]ProcessInfo, error) {
 		}
 		times, err := p.Times()
 		if err != nil {
-			times = &process.TimesStat{}
+			slog.Warn("Failed to get process times", "pid", p.Pid, "error", err)
+			times = &process.CPUTimesStat{}
 		}
 		total := times.User + times.System
 		minutes := int(total) / 60
@@ -217,10 +226,12 @@ func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 		return []ProcessInfo{}, nil
 	}
 	if err != nil {
+		slog.Error("Failed to read process file", "file", file, "error", err)
 		return nil, err
 	}
 	var infos []ProcessInfo
 	if err := json.Unmarshal(data, &infos); err != nil {
+		slog.Error("Failed to unmarshal process data", "file", file, "error", err)
 		return nil, err
 	}
 	return infos, nil
@@ -230,9 +241,14 @@ func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 func saveProcesses(file string, procs []ProcessInfo) error {
 	data, err := json.Marshal(procs)
 	if err != nil {
+		slog.Error("Failed to marshal processes", "error", err)
 		return err
 	}
-	return os.WriteFile(file, data, 0644)
+	if err := os.WriteFile(file, data, 0644); err != nil {
+		slog.Error("Failed to write process file", "file", file, "error", err)
+		return err
+	}
+	return nil
 }
 
 // diffStrings finds added and removed strings.
