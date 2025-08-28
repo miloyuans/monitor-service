@@ -13,7 +13,7 @@ import (
 type AlertBot struct {
 	bot          *tgbotapi.BotAPI
 	chatID       int64
-	clusterName  string
+	ClusterName  string
 	showHostname bool
 	hostname     string
 	template     *template.Template
@@ -56,7 +56,7 @@ func NewAlertBot(token string, chatID int64, clusterName string, showHostname bo
 	return &AlertBot{
 		bot:          bot,
 		chatID:       chatID,
-		clusterName:  clusterName,
+		ClusterName:  clusterName,
 		showHostname: showHostname,
 		hostname:     hostname,
 		template:     tmpl,
@@ -73,7 +73,7 @@ func (a *AlertBot) SendAlert(message string, hostIP string) {
 		}
 		service := strings.Trim(parts[0], "**")
 		data := AlertData{
-			ClusterName:  a.clusterName,
+			ClusterName:  a.ClusterName,
 			Hostname:     a.hostname,
 			HostIP:       hostIP,
 			Service:      service,

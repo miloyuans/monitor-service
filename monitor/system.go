@@ -17,8 +17,8 @@ import (
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/process"
-	"monitor-service/alert"
-	"monitor-service/config"
+	"github.com/yourusername/monitor-service/alert"
+	"github.com/yourusername/monitor-service/config"
 )
 
 // UserInfo holds user information.
@@ -93,7 +93,7 @@ func bytesCompare(a, b net.IP) int {
 // System monitors system users and processes for changes.
 func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertBot) ([]string, error) {
 	msgs := []string{}
-	clusterPrefix := fmt.Sprintf("**System (%s)**", alertBot.clusterName)
+	clusterPrefix := fmt.Sprintf("**System (%s)**", alertBot.ClusterName)
 
 	// File size limit (500 MB)
 	const maxFileSize = 500 * 1024 * 1024 // 500 MB in bytes
