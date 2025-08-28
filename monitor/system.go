@@ -91,7 +91,7 @@ func bytesCompare(a, b net.IP) int {
 }
 
 // System monitors system users and processes for changes.
-func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertBot) ([]string, error) {
+func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertBot) ([]string, string, error) {
 	msgs := []string{}
 	clusterPrefix := fmt.Sprintf("**System (%s)**", alertBot.ClusterName)
 
@@ -107,11 +107,11 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	if shouldCleanup(lastCleanupFile, 30*24*time.Hour) {
 		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
 			slog.Error("Failed to cleanup historical files", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to cleanup historical files: %v", clusterPrefix, err)}, err
+			return []string{fmt.Sprintf("%s: Failed to cleanup historical files: %v", clusterPrefix, err)}, "", err
 		}
 		if err := updateLastCleanup(lastCleanupFile); err != nil {
 			slog.Error("Failed to update last cleanup time", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to update last cleanup time: %v", clusterPrefix, err)}, err
+			return []string{fmt.Sprintf("%s: Failed to update last cleanup time: %v", clusterPrefix, err)}, "", err
 		}
 	}
 
@@ -137,13 +137,13 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
 		slog.Error("Failed to get current users", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, "", err
 	}
 	slog.Debug("Retrieved current users", "count", len(currentUsers))
 	initialUsers, err := loadInitialUsers(userInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial users", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, "", err
 	}
 	slog.Debug("Loaded initial users", "count", len(initialUsers))
 	if len(initialUsers) == 0 {
@@ -151,7 +151,7 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 		slog.Info("First run: initializing user file")
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
 			slog.Error("Failed to save initial users", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, err
+			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, "", err
 		}
 	} else {
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
@@ -169,12 +169,12 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 				// Log change incrementally
 				if err := logChange(changeLogFile, "user", addedUsers, removedUsers); err != nil {
 					slog.Error("Failed to log user change", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to log user change: %v", clusterPrefix, err)}, err
+					return []string{fmt.Sprintf("%s: Failed to log user change: %v", clusterPrefix, err)}, "", err
 				}
 				// Refresh initialization data
 				if err := saveUsers(userInitialFile, currentUsers); err != nil {
 					slog.Error("Failed to update initial users", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, err
+					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, "", err
 				}
 			}
 		} else {
@@ -187,13 +187,13 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	currentProcesses, err := getCurrentProcesses()
 	if err != nil {
 		slog.Error("Failed to get current processes", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, "", err
 	}
 	slog.Debug("Retrieved current processes", "count", len(currentProcesses))
 	initialProcesses, err := loadInitialProcesses(processInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial processes", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, "", err
 	}
 	slog.Debug("Loaded initial processes", "count", len(initialProcesses))
 	if len(initialProcesses) == 0 {
@@ -201,7 +201,7 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 		slog.Info("First run: initializing process file")
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 			slog.Error("Failed to save initial processes", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, err
+			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, "", err
 		}
 	} else {
 		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
@@ -225,12 +225,12 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 				// Log change incrementally
 				if err := logChange(changeLogFile, "process", addedProcs, removedProcs); err != nil {
 					slog.Error("Failed to log process change", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to log process change: %v", clusterPrefix, err)}, err
+					return []string{fmt.Sprintf("%s: Failed to log process change: %v", clusterPrefix, err)}, "", err
 				}
 				// Refresh initialization data
 				if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 					slog.Error("Failed to update initial processes", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, err
+					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, "", err
 				}
 			}
 		} else {
@@ -238,23 +238,18 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 		}
 	}
 
-	// Send alerts via AlertBot
-	if len(msgs) > 0 {
-		alertBot.SendAlert(strings.Join(msgs, "\n\n"), hostIP)
-	}
-
 	// Reinitialize if file size exceeds limit and no alerts
 	if needsReinit && len(msgs) == 0 {
 		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses, changeLogFile); err != nil {
 			slog.Error("Failed to reinitialize system monitoring", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to reinitialize system monitoring: %v", clusterPrefix, err)}, err
+			return []string{fmt.Sprintf("%s: Failed to reinitialize system monitoring: %v", clusterPrefix, err)}, "", err
 		}
 	}
 
 	if len(msgs) > 0 {
-		return msgs, fmt.Errorf("system issues")
+		return msgs, hostIP, fmt.Errorf("system issues")
 	}
-	return nil, nil
+	return nil, "", nil
 }
 
 // logChange appends a change entry to the log file.

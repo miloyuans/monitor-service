@@ -76,6 +76,7 @@ func main() {
 				continue
 			}
 			messages := []string{}
+			var systemIP string
 			if cfg.RabbitMQ.Enabled {
 				if msg, err := monitor.RabbitMQ(ctx, cfg.RabbitMQ, cfg.ClusterName); err != nil {
 					messages = append(messages, msg)
@@ -102,8 +103,9 @@ func main() {
 				}
 			}
 			if cfg.SystemMonitoring.Enabled {
-				if msgs, err := monitor.System(ctx, cfg.SystemMonitoring, alertBot); err != nil {
+				if msgs, ip, err := monitor.System(ctx, cfg.SystemMonitoring, alertBot); err != nil {
 					messages = append(messages, msgs...)
+					systemIP = ip
 				}
 			}
 
@@ -116,7 +118,11 @@ func main() {
 				}
 				last, ok := alertLastSent.Load(hash)
 				if !ok || time.Since(last.(time.Time)) > silenceDuration {
-					alertBot.SendAlert(alertMsg, "unknown") // Use "unknown" as fallback IP for non-system monitors
+					ip := "unknown"
+					if systemIP != "" {
+						ip = systemIP
+					}
+					alertBot.SendAlert(alertMsg, ip)
 					alertLastSent.Store(hash, time.Now())
 				}
 			}
