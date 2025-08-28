@@ -1,7 +1,7 @@
 monitoring:
   enabled: true
 telegram:
-  bot_token: "your_bot_token"
+  bot_token: "124abc"
   chat_id: 123456789
 rabbitmq:
   enabled: false
