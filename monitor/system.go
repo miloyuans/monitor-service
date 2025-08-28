@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/process"
 	"monitor-service/config"
 )
@@ -195,7 +196,7 @@ func getCurrentProcesses() ([]ProcessInfo, error) {
 		times, err := p.Times()
 		if err != nil {
 			slog.Warn("Failed to get process times", "pid", p.Pid, "error", err)
-			times = &process.TimesStat{}
+			times = &cpu.TimesStat{}
 		}
 		total := times.User + times.System
 		minutes := int(total) / 60
