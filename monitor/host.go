@@ -51,14 +51,14 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	// Get processes once for both CPU and memory to reduce system calls
 	procs, err := process.Processes()
 	if err != nil {
-		slog.Error("Failed to get processes", "error", err)
+		slog.Error("Failed to get processes", "error", err, "component", "host_monitor")
 		return []string{fmt.Sprintf("%s: Failed to get processes: %v", clusterPrefix, err)}, hostIP, err
 	}
 
 	// CPU usage
 	cpuPercents, err := cpu.Percent(time.Second, false)
 	if err != nil {
-		slog.Error("Failed to get CPU usage", "error", err)
+		slog.Error("Failed to get CPU usage", "error", err, "component", "host_monitor")
 		return []string{fmt.Sprintf("%s: Failed to get CPU usage: %v", clusterPrefix, err)}, hostIP, err
 	}
 	cpuAvg := 0.0
@@ -74,7 +74,7 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 		cpuStatus = fmt.Sprintf("异常❌ %.2f%% > %.2f%%", cpuAvg, cfg.CPUThreshold)
 		hasIssue = true
 		if cpuTopProcsMsg, err = getTopCPUProcesses(procs, 3); err != nil {
-			slog.Warn("Failed to get top CPU processes", "error", err)
+			slog.Warn("Failed to get top CPU processes", "error", err, "component", "host_monitor")
 		}
 	}
 	statusLines = append(statusLines, fmt.Sprintf("**CPU使用率**: %s", cpuStatus))
@@ -85,7 +85,7 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	// Memory usage (remaining rate)
 	vm, err := mem.VirtualMemory()
 	if err != nil {
-		slog.Error("Failed to get memory usage", "error", err)
+		slog.Error("Failed to get memory usage", "error", err, "component", "host_monitor")
 		return []string{fmt.Sprintf("%s: Failed to get memory usage: %v", clusterPrefix, err)}, hostIP, err
 	}
 	remainingPercent := 100.0 - vm.UsedPercent
@@ -96,7 +96,7 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 		memStatus = fmt.Sprintf("异常❌ %.2f%% < %.2f%%", remainingPercent, remainingThreshold)
 		hasIssue = true
 		if memTopProcsMsg, err = getTopMemoryProcesses(procs, 3); err != nil {
-			slog.Warn("Failed to get top memory processes", "error", err)
+			slog.Warn("Failed to get top memory processes", "error", err, "component", "host_monitor")
 		}
 	}
 	statusLines = append(statusLines, fmt.Sprintf("**内存剩余率**: %s", memStatus))
@@ -108,24 +108,20 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	const bytesToGB = 1.0 / (1024 * 1024 * 1024) // 1 GB = 10^9 bytes
 	netIO1, err := net.IOCounters(false)
 	if err != nil {
-		slog.Error("Failed to get network IO", "error", err)
+		slog.Error("Failed to get network IO", "error", err, "component", "host_monitor")
 		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	time.Sleep(time.Second)
 	netIO2, err := net.IOCounters(false)
 	if err != nil {
-		slog.Error("Failed to get network IO", "error", err)
+		slog.Error("Failed to get network IO", "error", err, "component", "host_monitor")
 		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	var netBytesSent, netBytesRecv float64
 	for i, io1 := range netIO1 {
 		if i < len(netIO2) {
-			sent := float64(io1.BytesSent)
-			recv := float64(io1.BytesRecv)
-			if i < len(netIO2) {
-				sent = float64(netIO2[i].BytesSent - io1.BytesSent)
-				recv = float64(netIO2[i].BytesRecv - io1.BytesRecv)
-			}
+			sent := float64(netIO2[i].BytesSent - io1.BytesSent)
+			recv := float64(netIO2[i].BytesRecv - io1.BytesRecv)
 			if sent >= 0 {
 				netBytesSent += sent * bytesToGB
 			}
@@ -145,13 +141,13 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	// Disk IO rate (in GB/s)
 	diskIO1, err := disk.IOCounters()
 	if err != nil {
-		slog.Error("Failed to get disk IO", "error", err)
+		slog.Error("Failed to get disk IO", "error", err, "component", "host_monitor")
 		return []string{fmt.Sprintf("%s: Failed to get disk IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	time.Sleep(time.Second)
 	diskIO2, err := disk.IOCounters()
 	if err != nil {
-		slog.Error("Failed to get disk IO", "error", err)
+		slog.Error("Failed to get disk IO", "error", err, "component", "host_monitor")
 		return []string{fmt.Sprintf("%s: Failed to get disk IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	var diskRead, diskWrite float64
@@ -178,7 +174,7 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	// Disk usage (root)
 	du, err := disk.Usage("/")
 	if err != nil {
-		slog.Error("Failed to get disk usage", "error", err)
+		slog.Error("Failed to get disk usage", "error", err, "component", "host_monitor")
 		return []string{fmt.Sprintf("%s: Failed to get disk usage: %v", clusterPrefix, err)}, hostIP, err
 	}
 	diskStatus := "正常✅"
@@ -186,8 +182,8 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	if du.UsedPercent > cfg.DiskThreshold {
 		diskStatus = fmt.Sprintf("异常❌ %.2f%% > %.2f%%", du.UsedPercent, cfg.DiskThreshold)
 		hasIssue = true
-		if diskTopDirsMsg, err = getTopDiskDirectories(3); err != nil {
-			slog.Warn("Failed to get top disk directories", "error", err)
+		if diskTopDirsMsg, err = getTopDiskDirectories(ctx, 3); err != nil {
+			slog.Warn("Failed to get top disk directories", "error", err, "component", "host_monitor")
 		}
 	}
 	statusLines = append(statusLines, fmt.Sprintf("**磁盘使用率**: %s", diskStatus))
@@ -294,11 +290,11 @@ func getTopMemoryProcesses(procs []*process.Process, n int) (string, error) {
 }
 
 // getTopDiskDirectories gets the top N directories by disk usage.
-func getTopDiskDirectories(n int) (string, error) {
-	cmd := exec.Command("du", "-sh", "/*")
+func getTopDiskDirectories(ctx context.Context, n int) (string, error) {
+	cmd := exec.CommandContext(ctx, "du", "-sh", "/*")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		slog.Error("Failed to get disk usage for directories", "error", err, "output", string(output))
+		slog.Error("Failed to get disk usage for directories", "error", err, "output", string(output), "component", "host_monitor")
 		return "", fmt.Errorf("du command failed: %w", err)
 	}
 	lines := strings.Split(string(output), "\n")
@@ -315,11 +311,11 @@ func getTopDiskDirectories(n int) (string, error) {
 		if len(fields) != 2 {
 			continue
 		}
-		size := parseSize(fields[0])
+		size, sizeStr := parseSize(fields[0])
 		if size == 0 {
 			continue // Skip invalid sizes
 		}
-		dirs = append(dirs, struct{ size, sizeStr, path string }{size: size, sizeStr: fields[0], path: fields[1]})
+		dirs = append(dirs, struct{ size float64; sizeStr string; path string }{size: size, sizeStr: sizeStr, path: fields[1]})
 	}
 	if len(dirs) == 0 {
 		return "", nil
@@ -333,27 +329,36 @@ func getTopDiskDirectories(n int) (string, error) {
 	return msg.String(), nil
 }
 
-// parseSize parses size strings like "1.0K", "2.5M" to bytes for sorting.
-func parseSize(size string) float64 {
+// parseSize parses size strings like "1.0K", "2.5M" to bytes for sorting and returns original string.
+func parseSize(size string) (float64, string) {
 	if len(size) == 0 {
-		return 0
+		return 0, ""
 	}
-	unit := size[len(size)-1]
-	value, err := strconv.ParseFloat(size[:len(size)-1], 64)
+	// Handle cases like "123" (no unit) or "123.4K"
+	unit := byte(0)
+	if len(size) > 0 && (size[len(size)-1] < '0' || size[len(size)-1] > '9') {
+		unit = size[len(size)-1]
+		size = size[:len(size)-1]
+	}
+	value, err := strconv.ParseFloat(size, 64)
 	if err != nil {
-		slog.Warn("Failed to parse size", "size", size, "error", err)
-		return 0
+		slog.Warn("Failed to parse size", "size", size, "error", err, "component", "host_monitor")
+		return 0, ""
+	}
+	originalSize := size
+	if unit != 0 {
+		originalSize += string(unit)
 	}
 	switch unit {
 	case 'K':
-		return value * 1024
+		return value * 1024, originalSize
 	case 'M':
-		return value * 1024 * 1024
+		return value * 1024 * 1024, originalSize
 	case 'G':
-		return value * 1024 * 1024 * 1024
+		return value * 1024 * 1024 * 1024, originalSize
 	case 'T':
-		return value * 1024 * 1024 * 1024 * 1024
+		return value * 1024 * 1024 * 1024 * 1024, originalSize
 	default:
-		return value
+		return value, originalSize
 	}
 }
