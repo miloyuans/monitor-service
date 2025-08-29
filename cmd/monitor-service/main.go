@@ -38,12 +38,12 @@ func main() {
 	// Load configuration
 	cfg, err := config.LoadConfig("/app/config.yaml")
 	if err != nil {
-		logger.Error("Error loading config", "error", err)
+		logger.Error("Failed to load configuration", "error", err, "component", "main")
 		os.Exit(1)
 	}
 
 	if !cfg.Monitoring.Enabled {
-		logger.Info("Monitoring is disabled")
+		logger.Info("Monitoring is disabled, exiting")
 		os.Exit(0)
 	}
 
@@ -51,42 +51,49 @@ func main() {
 	silenceDuration = time.Duration(cfg.AlertSilenceDuration) * time.Minute
 	checkInterval, err = time.ParseDuration(cfg.CheckInterval)
 	if err != nil {
-		logger.Error("Invalid check_interval", "error", err)
+		logger.Error("Invalid check_interval in configuration", "error", err, "value", cfg.CheckInterval, "component", "main")
 		os.Exit(1)
 	}
 
 	// Initialize alert system (Telegram bot)
 	alertBot, err := alert.NewAlertBot(cfg.Telegram.BotToken, cfg.Telegram.ChatID, cfg.ClusterName, cfg.ShowHostname)
 	if err != nil {
-		logger.Error("Error creating Telegram bot", "error", err)
+		logger.Error("Failed to initialize Telegram bot", "error", err, "component", "main")
 		os.Exit(1)
 	}
 
 	// Check if any monitoring is enabled
 	anyMonitoringEnabled := cfg.RabbitMQ.Enabled || cfg.Redis.Enabled || cfg.MySQL.Enabled || cfg.Nacos.Enabled || cfg.HostMonitoring.Enabled || cfg.SystemMonitoring.Enabled
 	if !anyMonitoringEnabled {
-		logger.Info("No monitoring enabled, exiting")
+		logger.Info("No monitoring enabled, exiting", "component", "main")
 		os.Exit(0)
 	}
 
 	// Start monitoring loop
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
+	logger.Info("Starting monitoring loop", "check_interval", checkInterval, "silence_duration", silenceDuration, "component", "main")
 	for {
 		select {
 		case <-ticker.C:
 			monitorAndAlert(ctx, cfg, alertBot)
 		case <-ctx.Done():
-			logger.Info("Shutting down monitoring loop")
+			logger.Info("Shutting down monitoring loop", "component", "main")
 			return
 		}
 	}
 }
 
 // monitorAndAlert runs all enabled monitors concurrently and sends alerts.
-func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.AlertBot) {
+func monitorAndAlert(ctx context.Context, cfg config.Config, alertBot *alert.AlertBot) {
+	// Check for context cancellation
+	if ctx.Err() != nil {
+		logger.Warn("Monitoring cycle skipped due to context cancellation", "error", ctx.Err(), "component", "main")
+		return
+	}
+
 	var wg sync.WaitGroup
-	messages := make([]string, 0)
+	messages := make([]string, 0, 10) // Pre-allocate with expected capacity
 	var systemIP string
 	mu := sync.Mutex{} // Protect messages and systemIP
 
@@ -108,7 +115,7 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		go func() {
 			defer wg.Done()
 			if msg, err := monitor.RabbitMQ(ctx, cfg.RabbitMQ, cfg.ClusterName); err != nil {
-				logger.Warn("RabbitMQ monitoring error", "error", err)
+				logger.Warn("RabbitMQ monitoring error", "error", err, "component", "main")
 				appendResult([]string{msg}, "", err)
 			}
 		}()
@@ -118,7 +125,7 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		go func() {
 			defer wg.Done()
 			if msgs, err := monitor.Redis(ctx, cfg.Redis, cfg.ClusterName); err != nil {
-				logger.Warn("Redis monitoring error", "error", err)
+				logger.Warn("Redis monitoring error", "error", err, "component", "main")
 				appendResult(msgs, "", err)
 			}
 		}()
@@ -128,7 +135,7 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		go func() {
 			defer wg.Done()
 			if msgs, err := monitor.MySQL(ctx, cfg.MySQL, cfg.ClusterName); err != nil {
-				logger.Warn("MySQL monitoring error", "error", err)
+				logger.Warn("MySQL monitoring error", "error", err, "component", "main")
 				appendResult(msgs, "", err)
 			}
 		}()
@@ -138,7 +145,7 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		go func() {
 			defer wg.Done()
 			if msg, err := monitor.Nacos(ctx, cfg.Nacos, cfg.ClusterName); err != nil {
-				logger.Warn("Nacos monitoring error", "error", err)
+				logger.Warn("Nacos monitoring error", "error", err, "component", "main")
 				appendResult([]string{msg}, "", err)
 			}
 		}()
@@ -148,7 +155,7 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		go func() {
 			defer wg.Done()
 			if msgs, ip, err := monitor.Host(ctx, cfg.HostMonitoring, alertBot); err != nil {
-				logger.Warn("Host monitoring error", "error", err)
+				logger.Warn("Host monitoring error", "error", err, "component", "main")
 				appendResult(msgs, ip, err)
 			}
 		}()
@@ -158,7 +165,7 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		go func() {
 			defer wg.Done()
 			if msgs, ip, err := monitor.System(ctx, cfg.SystemMonitoring, alertBot); err != nil {
-				logger.Warn("System monitoring error", "error", err)
+				logger.Warn("System monitoring error", "error", err, "component", "main")
 				appendResult(msgs, ip, err)
 			}
 		}()
@@ -166,6 +173,12 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 
 	// Wait for all monitors to complete
 	wg.Wait()
+
+	// Check for context cancellation after monitors complete
+	if ctx.Err() != nil {
+		logger.Warn("Alert processing skipped due to context cancellation", "error", ctx.Err(), "component", "main")
+		return
+	}
 
 	// Clean up old alertLastSent entries (older than 2 * silenceDuration)
 	alertLastSent.Range(func(key, value any) bool {
@@ -180,7 +193,7 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		alertMsg := strings.Join(messages, "\n\n")
 		hash, err := util.MD5Hash(alertMsg)
 		if err != nil {
-			logger.Error("Error hashing alert message", "error", err)
+			logger.Error("Failed to hash alert message", "error", err, "component", "main")
 			return
 		}
 		last, ok := alertLastSent.Load(hash)
@@ -191,11 +204,11 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 			}
 			alertBot.SendAlert(alertMsg, ip)
 			alertLastSent.Store(hash, time.Now())
-			logger.Info("Sent alert", "message_count", len(messages), "ip", ip)
+			logger.Info("Sent alert", "message_count", len(messages), "ip", ip, "component", "main")
 		} else {
-			logger.Debug("Alert suppressed due to deduplication", "hash", hash)
+			logger.Debug("Alert suppressed due to deduplication", "hash", hash, "component", "main")
 		}
 	} else {
-		logger.Info("No issues detected in this monitoring cycle")
+		logger.Info("No issues detected in this monitoring cycle", "component", "main")
 	}
 }
