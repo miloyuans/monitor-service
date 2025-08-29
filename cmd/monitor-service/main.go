@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -33,7 +34,6 @@ func main() {
 
 	// Initialize context with cancellation support
 	ctx, cancel = context.WithCancel(context.Background())
-	defer cancel()
 
 	// Load configuration
 	cfg, err := config.LoadConfig("/app/config.yaml")
@@ -43,7 +43,7 @@ func main() {
 	}
 
 	if !cfg.Monitoring.Enabled {
-		logger.Info("Monitoring is disabled, exiting")
+		logger.Info("Monitoring is disabled, exiting", "component", "main")
 		os.Exit(0)
 	}
 
@@ -61,6 +61,61 @@ func main() {
 		logger.Error("Failed to initialize Telegram bot", "error", err, "component", "main")
 		os.Exit(1)
 	}
+
+	// Send startup notification
+	hostIP, err := util.GetPrivateIP()
+	if err != nil {
+		logger.Warn("Failed to get private IP for startup notification", "error", err, "component", "main")
+		hostIP = "unknown"
+	}
+	hostname := alertBot.Hostname
+	if !alertBot.ShowHostname {
+		hostname = "N/A"
+	}
+	startupMsg := []string{
+		"🚀 *监控服务启动通知 Monitoring Service Startup* 🚀",
+		fmt.Sprintf("*时间*: %s", time.Now().Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("*环境*: %s", cfg.ClusterName),
+		fmt.Sprintf("*主机名*: %s", hostname),
+		fmt.Sprintf("*主机IP*: %s", hostIP),
+		fmt.Sprintf("*服务名*: Monitor Service (%s)", cfg.ClusterName),
+		"*事件名*: 服务启动",
+		"*详情*: 服务监控进程启动成功，请关注告警信息",
+	}
+	if err := alertBot.SendAlert(strings.Join(startupMsg, "\n"), hostIP); err != nil {
+		logger.Error("Failed to send startup notification", "error", err, "component", "main")
+	} else {
+		logger.Info("Sent startup notification", "ip", hostIP, "component", "main")
+	}
+
+	// Defer shutdown notification
+	defer func() {
+		hostIP, err := util.GetPrivateIP()
+		if err != nil {
+			logger.Warn("Failed to get private IP for shutdown notification", "error", err, "component", "main")
+			hostIP = "unknown"
+		}
+		hostname := alertBot.Hostname
+		if !alertBot.ShowHostname {
+			hostname = "N/A"
+		}
+		shutdownMsg := []string{
+			"🛑 *监控服务关闭通知 Monitoring Service Shutdown* 🛑",
+			fmt.Sprintf("*时间*: %s", time.Now().Format("2006-01-02 15:04:05")),
+			fmt.Sprintf("*环境*: %s", cfg.ClusterName),
+			fmt.Sprintf("*主机名*: %s", hostname),
+			fmt.Sprintf("*主机IP*: %s", hostIP),
+			fmt.Sprintf("*服务名*: Monitor Service (%s)", cfg.ClusterName),
+			"*事件名*: 服务关闭",
+			"*详情*: 服务监控进程关闭，请注意检查",
+		}
+		if err := alertBot.SendAlert(strings.Join(shutdownMsg, "\n"), hostIP); err != nil {
+			logger.Error("Failed to send shutdown notification", "error", err, "component", "main")
+		} else {
+			logger.Info("Sent shutdown notification", "ip", hostIP, "component", "main")
+		}
+		cancel()
+	}()
 
 	// Check if any monitoring is enabled
 	anyMonitoringEnabled := cfg.RabbitMQ.Enabled || cfg.Redis.Enabled || cfg.MySQL.Enabled || cfg.Nacos.Enabled || cfg.HostMonitoring.Enabled || cfg.SystemMonitoring.Enabled
