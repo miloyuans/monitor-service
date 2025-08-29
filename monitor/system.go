@@ -1,3 +1,4 @@
+```go
 package monitor
 
 import (
@@ -7,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +19,7 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 	"monitor-service/alert"
 	"monitor-service/config"
+	"monitor-service/util"
 )
 
 // UserInfo holds user information.
@@ -43,51 +44,6 @@ type ChangeLogEntry struct {
 	Type      string    `json:"type"` // "user" or "process"
 	Added     []any     `json:"added"`
 	Removed   []any     `json:"removed"`
-}
-
-// getPrivateIP retrieves the first non-loopback IPv4 address in private ranges.
-func getPrivateIP() (string, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "", err
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			if isPrivateIP(ipnet.IP) {
-				return ipnet.IP.String(), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no private IP found")
-}
-
-// isPrivateIP checks if an IP is in a private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
-func isPrivateIP(ip net.IP) bool {
-	privateRanges := []struct {
-		start, end net.IP
-	}{
-		{net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255")},
-		{net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255")},
-		{net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255")},
-	}
-	for _, r := range privateRanges {
-		if bytesCompare(ip, r.start) >= 0 && bytesCompare(ip, r.end) <= 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// bytesCompare compares two IP addresses as byte slices.
-func bytesCompare(a, b net.IP) int {
-	for i := 0; i < len(a); i++ {
-		if a[i] < b[i] {
-			return -1
-		} else if a[i] > b[i] {
-			return 1
-		}
-	}
-	return 0
 }
 
 // System monitors system users and processes for changes.
@@ -126,10 +82,25 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	}
 
 	// Get private IP
-	hostIP, err := getPrivateIP()
+	hostIP, err := util.GetPrivateIP()
 	if err != nil {
 		slog.Warn("Failed to get private IP", "error", err)
 		hostIP = "unknown"
+	}
+
+	// Initialize alert message
+	hostname := alertBot.Hostname
+	if !alertBot.ShowHostname {
+		hostname = "N/A"
+	}
+	header := []string{
+		"🚨 *监控 Monitoring 告警 Alert* 🚨",
+		fmt.Sprintf("*环境*: %s", alertBot.ClusterName),
+		fmt.Sprintf("*主机名*: %s", hostname),
+		fmt.Sprintf("*主机IP*: %s", hostIP),
+		fmt.Sprintf("*服务名*: System (%s)", alertBot.ClusterName),
+		"*事件名*: 服务异常",
+		"*详情*:",
 	}
 
 	// Monitor users
@@ -137,13 +108,13 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
 		slog.Error("Failed to get current users", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, "", err
+		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, hostIP, err
 	}
 	slog.Debug("Retrieved current users", "count", len(currentUsers))
 	initialUsers, err := loadInitialUsers(userInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial users", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, "", err
+		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, hostIP, err
 	}
 	slog.Debug("Loaded initial users", "count", len(initialUsers))
 	if len(initialUsers) == 0 {
@@ -151,7 +122,7 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 		slog.Info("First run: initializing user file")
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
 			slog.Error("Failed to save initial users", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, "", err
+			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, hostIP, err
 		}
 	} else {
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
@@ -165,16 +136,16 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 			}
 			if userMsg != "" {
 				slog.Info("Generating user change alert", "added", len(addedUsers), "removed", len(removedUsers))
-				msgs = append(msgs, fmt.Sprintf("%s: 用户变更:\n%s", clusterPrefix, userMsg))
+				msgs = append(msgs, strings.Join(append(header, userMsg), "\n"))
 				// Log change incrementally
 				if err := logChange(changeLogFile, "user", addedUsers, removedUsers); err != nil {
 					slog.Error("Failed to log user change", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to log user change: %v", clusterPrefix, err)}, "", err
+					return []string{fmt.Sprintf("%s: Failed to log user change: %v", clusterPrefix, err)}, hostIP, err
 				}
 				// Refresh initialization data
 				if err := saveUsers(userInitialFile, currentUsers); err != nil {
 					slog.Error("Failed to update initial users", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, "", err
+					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, hostIP, err
 				}
 			}
 		} else {
@@ -187,13 +158,13 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	currentProcesses, err := getCurrentProcesses()
 	if err != nil {
 		slog.Error("Failed to get current processes", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, "", err
+		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, hostIP, err
 	}
 	slog.Debug("Retrieved current processes", "count", len(currentProcesses))
 	initialProcesses, err := loadInitialProcesses(processInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial processes", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, "", err
+		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, hostIP, err
 	}
 	slog.Debug("Loaded initial processes", "count", len(initialProcesses))
 	if len(initialProcesses) == 0 {
@@ -201,7 +172,7 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 		slog.Info("First run: initializing process file")
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 			slog.Error("Failed to save initial processes", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, "", err
+			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, hostIP, err
 		}
 	} else {
 		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
@@ -221,16 +192,16 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 			}
 			if procMsg != "" {
 				slog.Info("Generating process change alert", "added", len(addedProcs), "removed", len(removedProcs))
-				msgs = append(msgs, fmt.Sprintf("%s: 进程变更:\n%s", clusterPrefix, procMsg))
+				msgs = append(msgs, strings.Join(append(header, procMsg), "\n"))
 				// Log change incrementally
 				if err := logChange(changeLogFile, "process", addedProcs, removedProcs); err != nil {
 					slog.Error("Failed to log process change", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to log process change: %v", clusterPrefix, err)}, "", err
+					return []string{fmt.Sprintf("%s: Failed to log process change: %v", clusterPrefix, err)}, hostIP, err
 				}
 				// Refresh initialization data
 				if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 					slog.Error("Failed to update initial processes", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, "", err
+					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, hostIP, err
 				}
 			}
 		} else {
@@ -242,7 +213,7 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	if needsReinit && len(msgs) == 0 {
 		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses, changeLogFile); err != nil {
 			slog.Error("Failed to reinitialize system monitoring", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to reinitialize system monitoring: %v", clusterPrefix, err)}, "", err
+			return []string{fmt.Sprintf("%s: Failed to reinitialize system monitoring: %v", clusterPrefix, err)}, hostIP, err
 		}
 	}
 

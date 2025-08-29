@@ -1,40 +1,27 @@
 package alert
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
-	"text/template"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// AlertBot wraps the Telegram bot and alert template.
+// AlertBot handles sending alerts via Telegram.
 type AlertBot struct {
-	bot          *tgbotapi.BotAPI
-	chatID       int64
-	ClusterName  string
-	showHostname bool
-	hostname     string
-	template     *template.Template
-}
-
-// AlertData holds the data for rendering the alert template.
-type AlertData struct {
-	ClusterName  string
-	Hostname     string
-	HostIP       string
-	Service      string
-	Issue        string
-	Details      string
+	Bot         *tgbotapi.BotAPI
+	ChatID      int64
+	ClusterName string
+	Hostname    string
 	ShowHostname bool
 }
 
-// NewAlertBot initializes a new Telegram bot for sending alerts.
-func NewAlertBot(token string, chatID int64, clusterName string, showHostname bool) (*AlertBot, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
+// NewAlertBot creates a new Telegram bot for alerts.
+func NewAlertBot(botToken string, chatID int64, clusterName string, showHostname bool) (*AlertBot, error) {
+	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
-		slog.Error("Failed to create Telegram bot", "error", err)
 		return nil, err
 	}
 	hostname, err := os.Hostname()
@@ -42,54 +29,22 @@ func NewAlertBot(token string, chatID int64, clusterName string, showHostname bo
 		slog.Warn("Failed to get hostname", "error", err)
 		hostname = "unknown"
 	}
-	tmpl := template.Must(template.New("alert").Parse(`
-🚨 *监控 Monitoring 告警 Alert* 🚨
-
-*环境*: {{.ClusterName}}
-{{if .ShowHostname}}*主机名*: {{.Hostname}}{{end}}
-*主机IP*: {{.HostIP}}
-*服务名*: {{.Service}}
-*事件名*: {{.Issue}}
-*详情*: 
-{{.Details}}
-`))
 	return &AlertBot{
-		bot:          bot,
-		chatID:       chatID,
-		ClusterName:  clusterName,
-		showHostname: showHostname,
-		hostname:     hostname,
-		template:     tmpl,
+		Bot:         bot,
+		ChatID:      chatID,
+		ClusterName: clusterName,
+		Hostname:    hostname,
+		ShowHostname: showHostname,
 	}, nil
 }
 
-// SendAlert sends a formatted alert to Telegram using the Markdown template.
-func (a *AlertBot) SendAlert(message string, hostIP string) {
-	lines := strings.Split(message, "\n\n")
-	for _, line := range lines {
-		parts := strings.SplitN(line, ": ", 2)
-		if len(parts) < 2 {
-			continue
-		}
-		service := strings.Trim(parts[0], "**")
-		data := AlertData{
-			ClusterName:  a.ClusterName,
-			Hostname:     a.hostname,
-			HostIP:       hostIP,
-			Service:      service,
-			Issue:        "服务异常",
-			Details:      parts[1],
-			ShowHostname: a.showHostname,
-		}
-		var buf strings.Builder
-		if err := a.template.Execute(&buf, data); err != nil {
-			slog.Error("Error rendering alert template", "error", err)
-			continue
-		}
-		msg := tgbotapi.NewMessage(a.chatID, buf.String())
-		msg.ParseMode = tgbotapi.ModeMarkdown
-		if _, err := a.bot.Send(msg); err != nil {
-			slog.Error("Error sending alert", "error", err)
-		}
+// SendAlert sends a Telegram alert with the provided message and host IP.
+func (a *AlertBot) SendAlert(message, hostIP string) {
+	msg := tgbotapi.NewMessage(a.ChatID, message)
+	msg.ParseMode = "Markdown"
+	if _, err := a.Bot.Send(msg); err != nil {
+		slog.Error("Failed to send Telegram alert", "error", err)
+	} else {
+		slog.Info("Sent Telegram alert", "message", message, "hostIP", hostIP)
 	}
 }

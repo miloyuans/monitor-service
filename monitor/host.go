@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"sort"
@@ -15,10 +14,10 @@ import (
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
-	"github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
 	"monitor-service/alert"
 	"monitor-service/config"
+	"monitor-service/util"
 )
 
 // Host monitors host resources and returns alerts if thresholds are exceeded.
@@ -26,7 +25,7 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	hasIssue := false
 	clusterPrefix := fmt.Sprintf("**Host (%s)**", alertBot.ClusterName)
 	// Get private IP
-	hostIP, err := getPrivateIP()
+	hostIP, err := util.GetPrivateIP()
 	if err != nil {
 		slog.Warn("Failed to get private IP", "error", err)
 		hostIP = "unknown"
@@ -36,7 +35,7 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 		"🚨 *监控 Monitoring 告警 Alert* 🚨",
 		fmt.Sprintf("*环境*: %s", alertBot.ClusterName),
 	}
-	// Hostname
+	// Hostname (assuming alert.AlertBot has exported Hostname and ShowHostname)
 	hostname := alertBot.Hostname
 	if !alertBot.ShowHostname {
 		hostname = "N/A"
@@ -48,7 +47,7 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	statusLines = append(statusLines, "*详情*:")
 
 	// CPU usage
-	cpuPercents, err := cpu.Percent(0, false)
+	cpuPercents, err := cpu.Percent(time.Second, false)
 	if err != nil {
 		slog.Error("Failed to get CPU usage", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get CPU usage: %v", clusterPrefix, err)}, hostIP, err
@@ -57,7 +56,9 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	for _, p := range cpuPercents {
 		cpuAvg += p
 	}
-	cpuAvg /= float64(len(cpuPercents))
+	if len(cpuPercents) > 0 {
+		cpuAvg /= float64(len(cpuPercents))
+	}
 	cpuStatus := "正常✅"
 	cpuTopProcsMsg := ""
 	if cpuAvg > cfg.CPUThreshold {
@@ -92,19 +93,25 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 
 	// Network IO rate (in GB/s)
 	const bytesToGB = 1.0 / (1024 * 1024 * 1024) // 1 GB = 10^9 bytes
-	netIO1, err := net.IOCounters(false)
+	netIO1, err := disk.IOCounters()
 	if err != nil {
 		slog.Error("Failed to get network IO", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	time.Sleep(1 * time.Second)
-	netIO2, err := net.IOCounters(false)
+	netIO2, err := disk.IOCounters()
 	if err != nil {
 		slog.Error("Failed to get network IO", "error", err)
 		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, hostIP, err
 	}
-	netBytesSent := float64(netIO2[0].BytesSent - netIO1[0].BytesSent) * bytesToGB
-	netBytesRecv := float64(netIO2[0].BytesRecv - netIO1[0].BytesRecv) * bytesToGB
+	var netBytesSent, netBytesRecv float64
+	for name, io1 := range netIO1 {
+		if io2, ok := netIO2[name]; ok {
+			netBytesSent += float64(io2.WriteBytes-io1.WriteBytes) * bytesToGB
+			netBytesRecv += float64(io2.ReadBytes-io1.ReadBytes) * bytesToGB
+		}
+	}
+	
 	netIORate := netBytesSent + netBytesRecv // GB/s
 	netIOStatus := "正常✅"
 	if netIORate > cfg.NetIOThreshold {
@@ -164,51 +171,6 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	return nil, "", nil
 }
 
-// getPrivateIP retrieves the first non-loopback IPv4 address in private ranges.
-func getPrivateIP() (string, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "", err
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			if isPrivateIP(ipnet.IP) {
-				return ipnet.IP.String(), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no private IP found")
-}
-
-// isPrivateIP checks if an IP is in a private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
-func isPrivateIP(ip net.IP) bool {
-	privateRanges := []struct {
-		start, end net.IP
-	}{
-		{net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255")},
-		{net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255")},
-		{net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255")},
-	}
-	for _, r := range privateRanges {
-		if bytesCompare(ip, r.start) >= 0 && bytesCompare(ip, r.end) <= 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// bytesCompare compares two IP addresses as byte slices.
-func bytesCompare(a, b net.IP) int {
-	for i := 0; i < len(a); i++ {
-		if a[i] < b[i] {
-			return -1
-		} else if a[i] > b[i] {
-			return 1
-		}
-	}
-	return 0
-}
-
 // getTopCPUProcesses gets the top N processes by CPU usage.
 func getTopCPUProcesses(n int) (string, error) {
 	procs, err := process.Processes()
@@ -238,6 +200,9 @@ func getTopCPUProcesses(n int) (string, error) {
 			}
 			top = append(top, procCPU{user: user, pid: p.Pid, name: name, cpu: cpu, stime: stime, tty: tty})
 		}
+	}
+	if len(top) == 0 {
+		return "", nil
 	}
 	sort.Slice(top, func(i, j int) bool { return top[i].cpu > top[j].cpu })
 	msg := "**最消耗CPU的3个进程:**\n| User | PID | Name | CPU% | Start Time | TTY |\n|------|-----|------|------|------------|-----|\n"
@@ -277,6 +242,9 @@ func getTopMemoryProcesses(n int) (string, error) {
 			top = append(top, procMem{user: user, pid: p.Pid, name: name, mem: mem.RSS, stime: stime, tty: tty})
 		}
 	}
+	if len(top) == 0 {
+		return "", nil
+	}
 	sort.Slice(top, func(i, j int) bool { return top[i].mem > top[j].mem })
 	const bytesToMB = 1.0 / (1024 * 1024) // Convert bytes to MB
 	msg := "**最消耗内存的3个进程:**\n| User | PID | Name | Memory (MB) | Start Time | TTY |\n|------|-----|------|-------------|------------|-----|\n"
@@ -297,9 +265,9 @@ func getTopDiskDirectories(n int) (string, error) {
 	}
 	lines := strings.Split(string(output), "\n")
 	var dirs []struct {
-		size  float64
+		size    float64
 		sizeStr string
-		path  string
+		path    string
 	}
 	for _, line := range lines {
 		if line == "" {
@@ -308,8 +276,11 @@ func getTopDiskDirectories(n int) (string, error) {
 		fields := strings.Fields(line)
 		if len(fields) == 2 {
 			size := parseSize(fields[0])
-			dirs = append(dirs, struct{ size, sizeStr, path string }{size, fields[0], fields[1]})
+			dirs = append(dirs, struct{ size, sizeStr, path string }{size: size, sizeStr: fields[0], path: fields[1]})
 		}
+	}
+	if len(dirs) == 0 {
+		return "", nil
 	}
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].size > dirs[j].size })
 	msg := "**最占用磁盘空间的3个目录:**\n| Size | Path |\n|------|------|\n"
