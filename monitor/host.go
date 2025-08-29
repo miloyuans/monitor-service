@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os/exec"
 	"sort"
