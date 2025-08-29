@@ -18,7 +18,7 @@ import (
 
 func main() {
 	// Load configuration
-	cfg, err := config.LoadConfig("config.yaml")
+	cfg, err := config.LoadConfig("/app/config.yaml")
 	if err != nil {
 		slog.Error("Failed to load config", "error", err)
 		os.Exit(1)
@@ -30,7 +30,7 @@ func main() {
 	})))
 
 	// Initialize alert bot
-	bot, err := alert.NewAlertBot(cfg.BotToken, cfg.ChatID, cfg.ClusterName, cfg.ShowHostname)
+	bot, err := alert.NewAlertBot(cfg.Telegram.BotToken, cfg.Telegram.ChatID, cfg.ClusterName, cfg.ShowHostname)
 	if err != nil {
 		slog.Error("Failed to initialize alert bot", "error", err)
 		os.Exit(1)
@@ -91,7 +91,7 @@ func main() {
 	}
 }
 
-func monitorAndAlert(ctx context.Context, cfg *config.Config, bot *alert.AlertBot, alertCache map[string]alertKey, alertSilenceDuration time.Duration) {
+func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot, alertCache map[string]alertKey, alertSilenceDuration time.Duration) {
 	var allMessages []string
 	var hostIP string
 
