@@ -19,7 +19,7 @@ import (
 
 func main() {
 	// Load configuration
-	cfg, err := config.LoadConfig()
+	cfg, err := config.LoadConfig("config.yaml")
 	if err != nil {
 		slog.Error("Failed to load config", "error", err)
 		os.Exit(1)
@@ -31,15 +31,15 @@ func main() {
 	})))
 
 	// Initialize alert bot
-	bot, err := alert.NewAlertBot(cfg)
+	bot, err := alert.NewAlertBot(cfg.BotToken, cfg.ChatID, cfg.ClusterName, cfg.Debug)
 	if err != nil {
 		slog.Error("Failed to initialize alert bot", "error", err)
 		os.Exit(1)
 	}
 
 	// Send startup alert
-	startupMsg := alertBot.FormatAlert("Monitor Service ("+alertBot.ClusterName+")", "服务启动", "监控服务已启动", "", "info")
-	if err := alertBot.SendAlert("Monitor Service ("+alertBot.ClusterName+")", "服务启动", "监控服务已启动", "", "info"); err != nil {
+	startupMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动", "", "info")
+	if err := bot.SendAlert("Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动", "", "info"); err != nil {
 		slog.Error("Failed to send startup alert", "error", err)
 	} else {
 		slog.Info("Sent startup alert", "message", startupMsg)
@@ -53,8 +53,8 @@ func main() {
 		sig := <-sigCh
 		slog.Info("Received signal, shutting down", "signal", sig)
 		// Send shutdown alert
-		shutdownMsg := alertBot.FormatAlert("Monitor Service ("+alertBot.ClusterName+")", "服务停止", "监控服务已停止", "", "info")
-		if err := alertBot.SendAlert("Monitor Service ("+alertBot.ClusterName+")", "服务停止", "监控服务已停止", "", "info"); err != nil {
+		shutdownMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止", "", "info")
+		if err := bot.SendAlert("Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止", "", "info"); err != nil {
 			slog.Error("Failed to send shutdown alert", "error", err)
 		} else {
 			slog.Info("Sent shutdown alert", "message", shutdownMsg)
@@ -92,13 +92,13 @@ func main() {
 	}
 }
 
-func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.AlertBot, alertCache map[string]alertKey, alertSilenceDuration time.Duration) {
+func monitorAndAlert(ctx context.Context, cfg *config.Config, bot *alert.AlertBot, alertCache map[string]alertKey, alertSilenceDuration time.Duration) {
 	var allMessages []string
 	var hostIP string
 
 	// Run system monitoring
 	if cfg.SystemMonitoring.Enabled {
-		messages, ip, err := monitor.System(ctx, cfg.SystemMonitoring, alertBot)
+		messages, ip, err := monitor.System(ctx, cfg.SystemMonitoring, bot)
 		if err != nil {
 			slog.Error("System monitoring failed", "error", err, "component", "main")
 		}
@@ -110,7 +110,7 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 
 	// Run host monitoring
 	if cfg.HostMonitoring.Enabled {
-		messages, ip, err := monitor.Host(ctx, cfg.HostMonitoring, alertBot)
+		messages, ip, err := monitor.Host(ctx, cfg.HostMonitoring, bot)
 		if err != nil {
 			slog.Error("Host monitoring failed", "error", err, "component", "main")
 		}
@@ -158,7 +158,11 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		}
 
 		// Deduplicate combined alert
-		hash := util.MD5Hash(details.String())
+		hash, err := util.MD5Hash(details.String())
+		if err != nil {
+			slog.Error("Failed to generate hash", "error", err, "component", "main")
+			return
+		}
 		now := time.Now()
 		if cache, ok := alertCache[hash]; ok && now.Sub(cache.timestamp) < alertSilenceDuration {
 			slog.Info("Skipping duplicate alert", "hash", hash, "component", "main")
@@ -166,9 +170,9 @@ func monitorAndAlert(ctx context.Context, cfg *config.Config, alertBot *alert.Al
 		}
 
 		// Format and send combined alert
-		serviceName := fmt.Sprintf("Monitor Service (%s)", alertBot.ClusterName)
-		combinedMsg := alertBot.FormatAlert(serviceName, "服务异常", details.String(), hostIP, "alert")
-		if err := alertBot.SendAlert(serviceName, "服务异常", details.String(), hostIP, "alert"); err != nil {
+		serviceName := fmt.Sprintf("Monitor Service (%s)", bot.ClusterName)
+		combinedMsg := bot.FormatAlert(serviceName, "服务异常", details.String(), hostIP, "alert")
+		if err := bot.SendAlert(serviceName, "服务异常", details.String(), hostIP, "alert"); err != nil {
 			slog.Error("Failed to send combined alert", "error", err, "component", "main")
 		} else {
 			slog.Info("Sent combined alert", "message", combinedMsg, "component", "main")
