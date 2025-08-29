@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -68,21 +67,13 @@ func main() {
 		logger.Warn("Failed to get private IP for startup notification", "error", err, "component", "main")
 		hostIP = "unknown"
 	}
-	hostname := alertBot.Hostname
-	if !alertBot.ShowHostname {
-		hostname = "N/A"
-	}
-	startupMsg := []string{
-		"🚀 *监控服务启动通知 Monitoring Service Startup* 🚀",
-		fmt.Sprintf("*时间*: %s", time.Now().Format("2006-01-02 15:04:05")),
-		fmt.Sprintf("*环境*: %s", cfg.ClusterName),
-		fmt.Sprintf("*主机名*: %s", hostname),
-		fmt.Sprintf("*主机IP*: %s", hostIP),
-		fmt.Sprintf("*服务名*: Monitor Service (%s)", cfg.ClusterName),
-		"*事件名*: 服务启动",
-		"*详情*: 服务监控进程启动成功，请关注告警信息",
-	}
-	if err := alertBot.SendAlert(strings.Join(startupMsg, "\n"), hostIP); err != nil {
+	if err := alertBot.SendAlert(
+		"Monitor Service ("+cfg.ClusterName+")",
+		"服务启动",
+		"服务监控进程启动成功，请关注告警信息",
+		hostIP,
+		"startup",
+	); err != nil {
 		logger.Error("Failed to send startup notification", "error", err, "component", "main")
 	} else {
 		logger.Info("Sent startup notification", "ip", hostIP, "component", "main")
@@ -95,21 +86,13 @@ func main() {
 			logger.Warn("Failed to get private IP for shutdown notification", "error", err, "component", "main")
 			hostIP = "unknown"
 		}
-		hostname := alertBot.Hostname
-		if !alertBot.ShowHostname {
-			hostname = "N/A"
-		}
-		shutdownMsg := []string{
-			"🛑 *监控服务关闭通知 Monitoring Service Shutdown* 🛑",
-			fmt.Sprintf("*时间*: %s", time.Now().Format("2006-01-02 15:04:05")),
-			fmt.Sprintf("*环境*: %s", cfg.ClusterName),
-			fmt.Sprintf("*主机名*: %s", hostname),
-			fmt.Sprintf("*主机IP*: %s", hostIP),
-			fmt.Sprintf("*服务名*: Monitor Service (%s)", cfg.ClusterName),
-			"*事件名*: 服务关闭",
-			"*详情*: 服务监控进程关闭，请注意检查",
-		}
-		if err := alertBot.SendAlert(strings.Join(shutdownMsg, "\n"), hostIP); err != nil {
+		if err := alertBot.SendAlert(
+			"Monitor Service ("+cfg.ClusterName+")",
+			"服务关闭",
+			"服务监控进程关闭，请注意检查",
+			hostIP,
+			"shutdown",
+		); err != nil {
 			logger.Error("Failed to send shutdown notification", "error", err, "component", "main")
 		} else {
 			logger.Info("Sent shutdown notification", "ip", hostIP, "component", "main")
@@ -257,9 +240,12 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, alertBot *alert.Ale
 			if ip == "" {
 				ip = "unknown"
 			}
-			alertBot.SendAlert(alertMsg, ip)
-			alertLastSent.Store(hash, time.Now())
-			logger.Info("Sent alert", "message_count", len(messages), "ip", ip, "component", "main")
+			if err := alertBot.SendAlert("Monitor Service ("+cfg.ClusterName+")", "服务异常", alertMsg, ip, "alert"); err != nil {
+				logger.Error("Failed to send alert", "error", err, "component", "main")
+			} else {
+				alertLastSent.Store(hash, time.Now())
+				logger.Info("Sent alert", "message_count", len(messages), "ip", ip, "component", "main")
+			}
 		} else {
 			logger.Debug("Alert suppressed due to deduplication", "hash", hash, "component", "main")
 		}

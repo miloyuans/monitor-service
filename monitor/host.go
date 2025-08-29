@@ -2,7 +2,6 @@ package monitor
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os/exec"
 	"sort"
@@ -23,43 +22,27 @@ import (
 // Host monitors host resources and returns alerts if thresholds are exceeded.
 func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) ([]string, string, error) {
 	hasIssue := false
-	clusterPrefix := fmt.Sprintf("**Host (%s)**", alertBot.ClusterName)
 	// Get private IP
 	hostIP, err := util.GetPrivateIP()
 	if err != nil {
-		slog.Warn("Failed to get private IP", "error", err)
+		slog.Warn("Failed to get private IP", "error", err, "component", "host_monitor")
 		hostIP = "unknown"
 	}
-	// Initialize alert message
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	statusLines := []string{
-		"🚨 *监控 Monitoring 告警 Alert* 🚨",
-		fmt.Sprintf("*时间*: %s", timestamp),
-		fmt.Sprintf("*环境*: %s", alertBot.ClusterName),
-	}
-	// Hostname
-	hostname := alertBot.Hostname
-	if !alertBot.ShowHostname {
-		hostname = "N/A"
-	}
-	statusLines = append(statusLines, fmt.Sprintf("*主机名*: %s", hostname))
-	statusLines = append(statusLines, fmt.Sprintf("*主机IP*: %s", hostIP))
-	statusLines = append(statusLines, fmt.Sprintf("*服务名*: Host (%s)", alertBot.ClusterName))
-	statusLines = append(statusLines, "*事件名*: 服务异常")
-	statusLines = append(statusLines, "*详情*:")
+	// Initialize details
+	var details strings.Builder
 
 	// Get processes once for both CPU and memory to reduce system calls
 	procs, err := process.Processes()
 	if err != nil {
 		slog.Error("Failed to get processes", "error", err, "component", "host_monitor")
-		return []string{fmt.Sprintf("%s: Failed to get processes: %v", clusterPrefix, err)}, hostIP, err
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", "Failed to get processes: "+err.Error(), hostIP, "alert")}, hostIP, err
 	}
 
 	// CPU usage
 	cpuPercents, err := cpu.Percent(time.Second, false)
 	if err != nil {
 		slog.Error("Failed to get CPU usage", "error", err, "component", "host_monitor")
-		return []string{fmt.Sprintf("%s: Failed to get CPU usage: %v", clusterPrefix, err)}, hostIP, err
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", "Failed to get CPU usage: "+err.Error(), hostIP, "alert")}, hostIP, err
 	}
 	cpuAvg := 0.0
 	for _, p := range cpuPercents {
@@ -77,16 +60,16 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 			slog.Warn("Failed to get top CPU processes", "error", err, "component", "host_monitor")
 		}
 	}
-	statusLines = append(statusLines, fmt.Sprintf("**CPU使用率**: %s", cpuStatus))
+	fmt.Fprintf(&details, "**CPU使用率**: %s\n", cpuStatus)
 	if cpuTopProcsMsg != "" {
-		statusLines = append(statusLines, cpuTopProcsMsg)
+		details.WriteString(cpuTopProcsMsg)
 	}
 
 	// Memory usage (remaining rate)
 	vm, err := mem.VirtualMemory()
 	if err != nil {
 		slog.Error("Failed to get memory usage", "error", err, "component", "host_monitor")
-		return []string{fmt.Sprintf("%s: Failed to get memory usage: %v", clusterPrefix, err)}, hostIP, err
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", "Failed to get memory usage: "+err.Error(), hostIP, "alert")}, hostIP, err
 	}
 	remainingPercent := 100.0 - vm.UsedPercent
 	remainingThreshold := 100.0 - cfg.MemThreshold
@@ -99,9 +82,9 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 			slog.Warn("Failed to get top memory processes", "error", err, "component", "host_monitor")
 		}
 	}
-	statusLines = append(statusLines, fmt.Sprintf("**内存剩余率**: %s", memStatus))
+	fmt.Fprintf(&details, "**内存剩余率**: %s\n", memStatus)
 	if memTopProcsMsg != "" {
-		statusLines = append(statusLines, memTopProcsMsg)
+		details.WriteString(memTopProcsMsg)
 	}
 
 	// Network IO rate (in GB/s)
@@ -109,13 +92,13 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 	netIO1, err := net.IOCounters(false)
 	if err != nil {
 		slog.Error("Failed to get network IO", "error", err, "component", "host_monitor")
-		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, hostIP, err
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", "Failed to get network IO: "+err.Error(), hostIP, "alert")}, hostIP, err
 	}
 	time.Sleep(time.Second)
 	netIO2, err := net.IOCounters(false)
 	if err != nil {
 		slog.Error("Failed to get network IO", "error", err, "component", "host_monitor")
-		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, hostIP, err
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", "Failed to get network IO: "+err.Error(), hostIP, "alert")}, hostIP, err
 	}
 	var netBytesSent, netBytesRecv float64
 	for i, io1 := range netIO1 {
@@ -136,19 +119,19 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 		netIOStatus = fmt.Sprintf("异常❌ %.4f GB/s > %.4f GB/s", netIORate, cfg.NetIOThreshold)
 		hasIssue = true
 	}
-	statusLines = append(statusLines, fmt.Sprintf("**网络IO使用率**: %s", netIOStatus))
+	fmt.Fprintf(&details, "**网络IO使用率**: %s\n", netIOStatus)
 
 	// Disk IO rate (in GB/s)
 	diskIO1, err := disk.IOCounters()
 	if err != nil {
 		slog.Error("Failed to get disk IO", "error", err, "component", "host_monitor")
-		return []string{fmt.Sprintf("%s: Failed to get disk IO: %v", clusterPrefix, err)}, hostIP, err
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", "Failed to get disk IO: "+err.Error(), hostIP, "alert")}, hostIP, err
 	}
 	time.Sleep(time.Second)
 	diskIO2, err := disk.IOCounters()
 	if err != nil {
 		slog.Error("Failed to get disk IO", "error", err, "component", "host_monitor")
-		return []string{fmt.Sprintf("%s: Failed to get disk IO: %v", clusterPrefix, err)}, hostIP, err
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", "Failed to get disk IO: "+err.Error(), hostIP, "alert")}, hostIP, err
 	}
 	var diskRead, diskWrite float64
 	for name, io1 := range diskIO1 {
@@ -169,13 +152,13 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 		diskIOStatus = fmt.Sprintf("异常❌ %.4f GB/s > %.4f GB/s", diskIORate, cfg.DiskIOThreshold)
 		hasIssue = true
 	}
-	statusLines = append(statusLines, fmt.Sprintf("**磁盘IO使用率**: %s", diskIOStatus))
+	fmt.Fprintf(&details, "**磁盘IO使用率**: %s\n", diskIOStatus)
 
 	// Disk usage (root)
 	du, err := disk.Usage("/")
 	if err != nil {
 		slog.Error("Failed to get disk usage", "error", err, "component", "host_monitor")
-		return []string{fmt.Sprintf("%s: Failed to get disk usage: %v", clusterPrefix, err)}, hostIP, err
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", "Failed to get disk usage: "+err.Error(), hostIP, "alert")}, hostIP, err
 	}
 	diskStatus := "正常✅"
 	diskTopDirsMsg := ""
@@ -186,13 +169,13 @@ func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) 
 			slog.Warn("Failed to get top disk directories", "error", err, "component", "host_monitor")
 		}
 	}
-	statusLines = append(statusLines, fmt.Sprintf("**磁盘使用率**: %s", diskStatus))
+	fmt.Fprintf(&details, "**磁盘使用率**: %s\n", diskStatus)
 	if diskTopDirsMsg != "" {
-		statusLines = append(statusLines, diskTopDirsMsg)
+		details.WriteString(diskTopDirsMsg)
 	}
 
 	if hasIssue {
-		return []string{strings.Join(statusLines, "\n")}, hostIP, fmt.Errorf("host issues")
+		return []string{alertBot.FormatAlert("Host ("+alertBot.ClusterName+")", "服务异常", details.String(), hostIP, "alert")}, hostIP, fmt.Errorf("host issues")
 	}
 	return nil, "", nil
 }

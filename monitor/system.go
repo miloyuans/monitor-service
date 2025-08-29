@@ -48,7 +48,7 @@ type ChangeLogEntry struct {
 // System monitors system users and processes for changes.
 func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertBot) ([]string, string, error) {
 	msgs := []string{}
-	clusterPrefix := fmt.Sprintf("**System (%s)**", alertBot.ClusterName)
+	serviceName := fmt.Sprintf("System (%s)", alertBot.ClusterName)
 
 	// File size limit (500 MB)
 	const maxFileSize = 500 * 1024 * 1024 // 500 MB in bytes
@@ -61,12 +61,12 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	lastCleanupFile := ".lastCleanup"
 	if shouldCleanup(lastCleanupFile, 30*24*time.Hour) {
 		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
-			slog.Error("Failed to cleanup historical files", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to cleanup historical files: %v", clusterPrefix, err)}, "", err
+			slog.Error("Failed to cleanup historical files", "error", err, "component", "system_monitor")
+			return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to cleanup historical files: %v", err), "", "alert")}, "", err
 		}
 		if err := updateLastCleanup(lastCleanupFile); err != nil {
-			slog.Error("Failed to update last cleanup time", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to update last cleanup time: %v", clusterPrefix, err)}, "", err
+			slog.Error("Failed to update last cleanup time", "error", err, "component", "system_monitor")
+			return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to update last cleanup time: %v", err), "", "alert")}, "", err
 		}
 	}
 
@@ -83,45 +83,30 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	// Get private IP
 	hostIP, err := util.GetPrivateIP()
 	if err != nil {
-		slog.Warn("Failed to get private IP", "error", err)
+		slog.Warn("Failed to get private IP", "error", err, "component", "system_monitor")
 		hostIP = "unknown"
-	}
-
-	// Initialize alert message
-	hostname := alertBot.Hostname
-	if !alertBot.ShowHostname {
-		hostname = "N/A"
-	}
-	header := []string{
-		"🚨 *监控 Monitoring 告警 Alert* 🚨",
-		fmt.Sprintf("*环境*: %s", alertBot.ClusterName),
-		fmt.Sprintf("*主机名*: %s", hostname),
-		fmt.Sprintf("*主机IP*: %s", hostIP),
-		fmt.Sprintf("*服务名*: System (%s)", alertBot.ClusterName),
-		"*事件名*: 服务异常",
-		"*详情*:",
 	}
 
 	// Monitor users
 	userInitialFile := ".userNumber"
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
-		slog.Error("Failed to get current users", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to get current users: %v", clusterPrefix, err)}, hostIP, err
+		slog.Error("Failed to get current users", "error", err, "component", "system_monitor")
+		return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to get current users: %v", err), hostIP, "alert")}, hostIP, err
 	}
-	slog.Debug("Retrieved current users", "count", len(currentUsers))
+	slog.Debug("Retrieved current users", "count", len(currentUsers), "component", "system_monitor")
 	initialUsers, err := loadInitialUsers(userInitialFile)
 	if err != nil {
-		slog.Error("Failed to load initial users", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to load initial users: %v", clusterPrefix, err)}, hostIP, err
+		slog.Error("Failed to load initial users", "error", err, "component", "system_monitor")
+		return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to load initial users: %v", err), hostIP, "alert")}, hostIP, err
 	}
-	slog.Debug("Loaded initial users", "count", len(initialUsers))
+	slog.Debug("Loaded initial users", "count", len(initialUsers), "component", "system_monitor")
 	if len(initialUsers) == 0 {
 		// First run, save initial
-		slog.Info("First run: initializing user file")
+		slog.Info("First run: initializing user file", "component", "system_monitor")
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
-			slog.Error("Failed to save initial users", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to save initial users: %v", clusterPrefix, err)}, hostIP, err
+			slog.Error("Failed to save initial users", "error", err, "component", "system_monitor")
+			return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to save initial users: %v", err), hostIP, "alert")}, hostIP, err
 		}
 	} else {
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
@@ -134,21 +119,21 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 				userMsg += "**减少的用户:**\n- " + strings.Join(removedUsers, "\n- ") + "\n"
 			}
 			if userMsg != "" {
-				slog.Info("Generating user change alert", "added", len(addedUsers), "removed", len(removedUsers))
-				msgs = append(msgs, strings.Join(append(header, userMsg), "\n"))
+				slog.Info("Generating user change alert", "added", len(addedUsers), "removed", len(removedUsers), "component", "system_monitor")
+				msgs = append(msgs, alertBot.FormatAlert(serviceName, "用户变更", userMsg, hostIP, "alert"))
 				// Log change incrementally
 				if err := logChange(changeLogFile, "user", addedUsers, removedUsers); err != nil {
-					slog.Error("Failed to log user change", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to log user change: %v", clusterPrefix, err)}, hostIP, err
+					slog.Error("Failed to log user change", "error", err, "component", "system_monitor")
+					return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to log user change: %v", err), hostIP, "alert")}, hostIP, err
 				}
 				// Refresh initialization data
 				if err := saveUsers(userInitialFile, currentUsers); err != nil {
-					slog.Error("Failed to update initial users", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to update initial users: %v", clusterPrefix, err)}, hostIP, err
+					slog.Error("Failed to update initial users", "error", err, "component", "system_monitor")
+					return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to update initial users: %v", err), hostIP, "alert")}, hostIP, err
 				}
 			}
 		} else {
-			slog.Debug("No user changes detected", "added", len(addedUsers), "removed", len(removedUsers))
+			slog.Debug("No user changes detected", "added", len(addedUsers), "removed", len(removedUsers), "component", "system_monitor")
 		}
 	}
 
@@ -156,22 +141,22 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 	processInitialFile := ".psAll"
 	currentProcesses, err := getCurrentProcesses()
 	if err != nil {
-		slog.Error("Failed to get current processes", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to get current processes: %v", clusterPrefix, err)}, hostIP, err
+		slog.Error("Failed to get current processes", "error", err, "component", "system_monitor")
+		return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to get current processes: %v", err), hostIP, "alert")}, hostIP, err
 	}
-	slog.Debug("Retrieved current processes", "count", len(currentProcesses))
+	slog.Debug("Retrieved current processes", "count", len(currentProcesses), "component", "system_monitor")
 	initialProcesses, err := loadInitialProcesses(processInitialFile)
 	if err != nil {
-		slog.Error("Failed to load initial processes", "error", err)
-		return []string{fmt.Sprintf("%s: Failed to load initial processes: %v", clusterPrefix, err)}, hostIP, err
+		slog.Error("Failed to load initial processes", "error", err, "component", "system_monitor")
+		return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to load initial processes: %v", err), hostIP, "alert")}, hostIP, err
 	}
-	slog.Debug("Loaded initial processes", "count", len(initialProcesses))
+	slog.Debug("Loaded initial processes", "count", len(initialProcesses), "component", "system_monitor")
 	if len(initialProcesses) == 0 {
 		// First run, save initial
-		slog.Info("First run: initializing process file")
+		slog.Info("First run: initializing process file", "component", "system_monitor")
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
-			slog.Error("Failed to save initial processes", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to save initial processes: %v", clusterPrefix, err)}, hostIP, err
+			slog.Error("Failed to save initial processes", "error", err, "component", "system_monitor")
+			return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to save initial processes: %v", err), hostIP, "alert")}, hostIP, err
 		}
 	} else {
 		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
@@ -190,29 +175,29 @@ func System(ctx context.Context, cfg config.SystemConfig, alertBot *alert.AlertB
 				}
 			}
 			if procMsg != "" {
-				slog.Info("Generating process change alert", "added", len(addedProcs), "removed", len(removedProcs))
-				msgs = append(msgs, strings.Join(append(header, procMsg), "\n"))
+				slog.Info("Generating process change alert", "added", len(addedProcs), "removed", len(removedProcs), "component", "system_monitor")
+				msgs = append(msgs, alertBot.FormatAlert(serviceName, "进程变更", procMsg, hostIP, "alert"))
 				// Log change incrementally
 				if err := logChange(changeLogFile, "process", addedProcs, removedProcs); err != nil {
-					slog.Error("Failed to log process change", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to log process change: %v", clusterPrefix, err)}, hostIP, err
+					slog.Error("Failed to log process change", "error", err, "component", "system_monitor")
+					return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to log process change: %v", err), hostIP, "alert")}, hostIP, err
 				}
 				// Refresh initialization data
 				if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
-					slog.Error("Failed to update initial processes", "error", err)
-					return []string{fmt.Sprintf("%s: Failed to update initial processes: %v", clusterPrefix, err)}, hostIP, err
+					slog.Error("Failed to update initial processes", "error", err, "component", "system_monitor")
+					return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to update initial processes: %v", err), hostIP, "alert")}, hostIP, err
 				}
 			}
 		} else {
-			slog.Debug("No process changes detected", "added", len(addedProcs), "removed", len(removedProcs))
+			slog.Debug("No process changes detected", "added", len(addedProcs), "removed", len(removedProcs), "component", "system_monitor")
 		}
 	}
 
 	// Reinitialize if file size exceeds limit and no alerts
 	if needsReinit && len(msgs) == 0 {
 		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses, changeLogFile); err != nil {
-			slog.Error("Failed to reinitialize system monitoring", "error", err)
-			return []string{fmt.Sprintf("%s: Failed to reinitialize system monitoring: %v", clusterPrefix, err)}, hostIP, err
+			slog.Error("Failed to reinitialize system monitoring", "error", err, "component", "system_monitor")
+			return []string{alertBot.FormatAlert(serviceName, "服务异常", fmt.Sprintf("Failed to reinitialize system monitoring: %v", err), hostIP, "alert")}, hostIP, err
 		}
 	}
 
@@ -260,21 +245,21 @@ func logChange(file string, changeType string, added, removed any) error {
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		slog.Error("Failed to marshal change entry", "error", err)
+		slog.Error("Failed to marshal change entry", "error", err, "component", "system_monitor")
 		return err
 	}
 	data = append(data, '\n') // JSONL format
 	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		slog.Error("Failed to open change log file", "file", file, "error", err)
+		slog.Error("Failed to open change log file", "file", file, "error", err, "component", "system_monitor")
 		return err
 	}
 	defer f.Close()
 	if _, err := f.Write(data); err != nil {
-		slog.Error("Failed to write change entry", "file", file, "error", err)
+		slog.Error("Failed to write change entry", "file", file, "error", err, "component", "system_monitor")
 		return err
 	}
-	slog.Info("Logged change entry", "type", changeType, "added", len(addedSlice), "removed", len(removedSlice))
+	slog.Info("Logged change entry", "type", changeType, "added", len(addedSlice), "removed", len(removedSlice), "component", "system_monitor")
 	return nil
 }
 
@@ -282,7 +267,7 @@ func logChange(file string, changeType string, added, removed any) error {
 func getCurrentUsers() ([]string, error) {
 	data, err := os.ReadFile("/etc/passwd")
 	if err != nil {
-		slog.Error("Failed to read /etc/passwd", "error", err)
+		slog.Error("Failed to read /etc/passwd", "error", err, "component", "system_monitor")
 		return nil, err
 	}
 	lines := strings.Split(string(data), "\n")
@@ -307,12 +292,12 @@ func loadInitialUsers(file string) ([]string, error) {
 		return []string{}, nil
 	}
 	if err != nil {
-		slog.Error("Failed to read user file", "file", file, "error", err)
+		slog.Error("Failed to read user file", "file", file, "error", err, "component", "system_monitor")
 		return nil, err
 	}
 	var info UserInfo
 	if err := json.Unmarshal(data, &info); err != nil {
-		slog.Error("Failed to unmarshal user data", "file", file, "error", err)
+		slog.Error("Failed to unmarshal user data", "file", file, "error", err, "component", "system_monitor")
 		return nil, err
 	}
 	return info.Users, nil
@@ -323,14 +308,14 @@ func saveUsers(file string, users []string) error {
 	info := UserInfo{Users: users}
 	data, err := json.Marshal(info)
 	if err != nil {
-		slog.Error("Failed to marshal users", "error", err)
+		slog.Error("Failed to marshal users", "error", err, "component", "system_monitor")
 		return err
 	}
 	if err := os.WriteFile(file, data, 0644); err != nil {
-		slog.Error("Failed to write user file", "file", file, "error", err)
+		slog.Error("Failed to write user file", "file", file, "error", err, "component", "system_monitor")
 		return err
 	}
-	slog.Debug("Saved users to file", "file", file, "count", len(users))
+	slog.Debug("Saved users to file", "file", file, "count", len(users), "component", "system_monitor")
 	return nil
 }
 
@@ -338,7 +323,7 @@ func saveUsers(file string, users []string) error {
 func getCurrentProcesses() ([]ProcessInfo, error) {
 	procs, err := process.Processes()
 	if err != nil {
-		slog.Error("Failed to get processes", "error", err)
+		slog.Error("Failed to get processes", "error", err, "component", "system_monitor")
 		return nil, err
 	}
 	var infos []ProcessInfo
@@ -346,27 +331,27 @@ func getCurrentProcesses() ([]ProcessInfo, error) {
 		user, err := p.Username()
 		if err != nil {
 			user = "?"
-			slog.Warn("Failed to get username for process", "pid", p.Pid, "error", err)
+			slog.Warn("Failed to get username for process", "pid", p.Pid, "error", err, "component", "system_monitor")
 		}
 		ppid, err := p.Ppid()
 		if err != nil {
 			ppid = 0
-			slog.Warn("Failed to get ppid for process", "pid", p.Pid, "error", err)
+			slog.Warn("Failed to get ppid for process", "pid", p.Pid, "error", err, "component", "system_monitor")
 		}
 		createTime, err := p.CreateTime()
 		if err != nil {
 			createTime = 0
-			slog.Warn("Failed to get create time for process", "pid", p.Pid, "error", err)
+			slog.Warn("Failed to get create time for process", "pid", p.Pid, "error", err, "component", "system_monitor")
 		}
 		stime := time.UnixMilli(createTime).Format("Jan 02 15:04")
 		tty, err := p.Terminal()
 		if err != nil {
 			tty = "?"
-			slog.Warn("Failed to get terminal for process", "pid", p.Pid, "error", err)
+			slog.Warn("Failed to get terminal for process", "pid", p.Pid, "error", err, "component", "system_monitor")
 		}
 		times, err := p.Times()
 		if err != nil {
-			slog.Warn("Failed to get process times", "pid", p.Pid, "error", err)
+			slog.Warn("Failed to get process times", "pid", p.Pid, "error", err, "component", "system_monitor")
 			times = &cpu.TimesStat{}
 		}
 		total := times.User + times.System
@@ -376,7 +361,7 @@ func getCurrentProcesses() ([]ProcessInfo, error) {
 		cmd, err := p.Cmdline()
 		if err != nil {
 			cmd, _ = p.Name()
-			slog.Warn("Failed to get cmdline for process, using name", "pid", p.Pid, "error", err)
+			slog.Warn("Failed to get cmdline for process, using name", "pid", p.Pid, "error", err, "component", "system_monitor")
 		}
 		infos = append(infos, ProcessInfo{
 			User:  user,
@@ -399,12 +384,12 @@ func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 		return []ProcessInfo{}, nil
 	}
 	if err != nil {
-		slog.Error("Failed to read process file", "file", file, "error", err)
+		slog.Error("Failed to read process file", "file", file, "error", err, "component", "system_monitor")
 		return nil, err
 	}
 	var infos []ProcessInfo
 	if err := json.Unmarshal(data, &infos); err != nil {
-		slog.Error("Failed to unmarshal process data", "file", file, "error", err)
+		slog.Error("Failed to unmarshal process data", "file", file, "error", err, "component", "system_monitor")
 		return nil, err
 	}
 	return infos, nil
@@ -414,14 +399,14 @@ func loadInitialProcesses(file string) ([]ProcessInfo, error) {
 func saveProcesses(file string, procs []ProcessInfo) error {
 	data, err := json.Marshal(procs)
 	if err != nil {
-		slog.Error("Failed to marshal processes", "error", err)
+		slog.Error("Failed to marshal processes", "error", err, "component", "system_monitor")
 		return err
 	}
 	if err := os.WriteFile(file, data, 0644); err != nil {
-		slog.Error("Failed to write process file", "file", file, "error", err)
+		slog.Error("Failed to write process file", "file", file, "error", err, "component", "system_monitor")
 		return err
 	}
-	slog.Debug("Saved processes to file", "file", file, "count", len(procs))
+	slog.Debug("Saved processes to file", "file", file, "count", len(procs), "component", "system_monitor")
 	return nil
 }
 
@@ -479,16 +464,16 @@ func diffProcesses(current, initial []ProcessInfo) (added, removed []ProcessInfo
 func shouldCleanup(lastCleanupFile string, interval time.Duration) bool {
 	data, err := os.ReadFile(lastCleanupFile)
 	if os.IsNotExist(err) {
-		slog.Debug("Cleanup file does not exist, triggering cleanup", "file", lastCleanupFile)
+		slog.Debug("Cleanup file does not exist, triggering cleanup", "file", lastCleanupFile, "component", "system_monitor")
 		return true
 	}
 	if err != nil {
-		slog.Error("Failed to read last cleanup file", "file", lastCleanupFile, "error", err)
+		slog.Error("Failed to read last cleanup file", "file", lastCleanupFile, "error", err, "component", "system_monitor")
 		return true
 	}
 	var lastCleanup time.Time
 	if err := json.Unmarshal(data, &lastCleanup); err != nil {
-		slog.Error("Failed to unmarshal last cleanup time", "file", lastCleanupFile, "error", err)
+		slog.Error("Failed to unmarshal last cleanup time", "file", lastCleanupFile, "error", err, "component", "system_monitor")
 		return true
 	}
 	return time.Since(lastCleanup) >= interval
@@ -498,14 +483,14 @@ func shouldCleanup(lastCleanupFile string, interval time.Duration) bool {
 func updateLastCleanup(lastCleanupFile string) error {
 	data, err := json.Marshal(time.Now())
 	if err != nil {
-		slog.Error("Failed to marshal last cleanup time", "error", err)
+		slog.Error("Failed to marshal last cleanup time", "error", err, "component", "system_monitor")
 		return err
 	}
 	if err := os.WriteFile(lastCleanupFile, data, 0644); err != nil {
-		slog.Error("Failed to write last cleanup file", "file", lastCleanupFile, "error", err)
+		slog.Error("Failed to write last cleanup file", "file", lastCleanupFile, "error", err, "component", "system_monitor")
 		return err
 	}
-	slog.Debug("Updated last cleanup time", "file", lastCleanupFile)
+	slog.Debug("Updated last cleanup time", "file", lastCleanupFile, "component", "system_monitor")
 	return nil
 }
 
@@ -514,7 +499,7 @@ func cleanupHistoricalFiles(retentionPeriod time.Duration) error {
 	now := time.Now()
 	files, err := filepath.Glob("*.[0-9]{8}_[0-9]{6}.tar.gz")
 	if err != nil {
-		slog.Error("Failed to glob historical files", "error", err)
+		slog.Error("Failed to glob historical files", "error", err, "component", "system_monitor")
 		return err
 	}
 	re := regexp.MustCompile(`\.(\d{8})_(\d{6})\.tar\.gz$`)
@@ -525,15 +510,15 @@ func cleanupHistoricalFiles(retentionPeriod time.Duration) error {
 		}
 		t, err := time.Parse("20060102_150405", matches[1]+"_"+matches[2])
 		if err != nil {
-			slog.Warn("Failed to parse timestamp in filename", "file", file, "error", err)
+			slog.Warn("Failed to parse timestamp in filename", "file", file, "error", err, "component", "system_monitor")
 			continue
 		}
 		if now.Sub(t) > retentionPeriod {
 			if err := os.Remove(file); err != nil {
-				slog.Error("Failed to remove historical file", "file", file, "error", err)
+				slog.Error("Failed to remove historical file", "file", file, "error", err, "component", "system_monitor")
 				continue
 			}
-			slog.Info("Removed historical file", "file", file)
+			slog.Info("Removed historical file", "file", file, "component", "system_monitor")
 		}
 	}
 	return nil
@@ -548,7 +533,7 @@ func reinitializeSystemMonitoring(userInitialFile, processInitialFile string, cu
 	archiveFile := fmt.Sprintf("archive_%s.tar.gz", timestamp)
 	f, err := os.Create(archiveFile)
 	if err != nil {
-		slog.Error("Failed to create archive file", "file", archiveFile, "error", err)
+		slog.Error("Failed to create archive file", "file", archiveFile, "error", err, "component", "system_monitor")
 		return err
 	}
 	defer f.Close()
@@ -564,7 +549,7 @@ func reinitializeSystemMonitoring(userInitialFile, processInitialFile string, cu
 		}
 		data, err := os.ReadFile(file)
 		if err != nil {
-			slog.Error("Failed to read file for archiving", "file", file, "error", err)
+			slog.Error("Failed to read file for archiving", "file", file, "error", err, "component", "system_monitor")
 			continue
 		}
 		hdr := &tar.Header{
@@ -574,34 +559,34 @@ func reinitializeSystemMonitoring(userInitialFile, processInitialFile string, cu
 			ModTime: time.Now(),
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
-			slog.Error("Failed to write tar header", "file", file, "error", err)
+			slog.Error("Failed to write tar header", "file", file, "error", err, "component", "system_monitor")
 			continue
 		}
 		if _, err := tw.Write(data); err != nil {
-			slog.Error("Failed to write file to archive", "file", file, "error", err)
+			slog.Error("Failed to write file to archive", "file", file, "error", err, "component", "system_monitor")
 			continue
 		}
 		if err := os.Remove(file); err != nil {
-			slog.Error("Failed to remove old file", "file", file, "error", err)
+			slog.Error("Failed to remove old file", "file", file, "error", err, "component", "system_monitor")
 			continue
 		}
-		slog.Info("Archived and removed file", "file", file, "archive", archiveFile)
+		slog.Info("Archived and removed file", "file", file, "archive", archiveFile, "component", "system_monitor")
 	}
 
 	// Reinitialize files with current data
 	if err := saveUsers(userInitialFile, currentUsers); err != nil {
-		slog.Error("Failed to reinitialize user initial file", "file", userInitialFile, "error", err)
+		slog.Error("Failed to reinitialize user initial file", "file", userInitialFile, "error", err, "component", "system_monitor")
 		return err
 	}
 	if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
-		slog.Error("Failed to reinitialize process initial file", "file", processInitialFile, "error", err)
+		slog.Error("Failed to reinitialize process initial file", "file", processInitialFile, "error", err, "component", "system_monitor")
 		return err
 	}
 	// Create empty change log file
 	if err := os.WriteFile(changeLogFile, []byte{}, 0644); err != nil {
-		slog.Error("Failed to create empty change log file", "file", changeLogFile, "error", err)
+		slog.Error("Failed to create empty change log file", "file", changeLogFile, "error", err, "component", "system_monitor")
 		return err
 	}
-	slog.Info("Reinitialized system monitoring files")
+	slog.Info("Reinitialized system monitoring files", "component", "system_monitor")
 	return nil
 }
