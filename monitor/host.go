@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,29 +17,41 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
+	"monitor-service/alert"
 	"monitor-service/config"
 )
 
 // Host monitors host resources and returns alerts if thresholds are exceeded.
-func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]string, error) {
+func Host(ctx context.Context, cfg config.HostConfig, alertBot *alert.AlertBot) ([]string, string, error) {
 	hasIssue := false
-	statusLines := []string{
-		fmt.Sprintf("服务环境: %s", clusterName),
-	}
-
-	// Hostname
-	hostname, err := os.Hostname()
+	clusterPrefix := fmt.Sprintf("**Host (%s)**", alertBot.ClusterName)
+	// Get private IP
+	hostIP, err := getPrivateIP()
 	if err != nil {
-		slog.Warn("Failed to get hostname", "error", err)
-		hostname = "unknown"
+		slog.Warn("Failed to get private IP", "error", err)
+		hostIP = "unknown"
 	}
-	statusLines = append(statusLines, fmt.Sprintf("主机名: %s", hostname))
+	// Initialize alert message
+	statusLines := []string{
+		"🚨 *监控 Monitoring 告警 Alert* 🚨",
+		fmt.Sprintf("*环境*: %s", alertBot.ClusterName),
+	}
+	// Hostname
+	hostname := alertBot.Hostname
+	if !alertBot.ShowHostname {
+		hostname = "N/A"
+	}
+	statusLines = append(statusLines, fmt.Sprintf("*主机名*: %s", hostname))
+	statusLines = append(statusLines, fmt.Sprintf("*主机IP*: %s", hostIP))
+	statusLines = append(statusLines, fmt.Sprintf("*服务名*: Host (%s)", alertBot.ClusterName))
+	statusLines = append(statusLines, "*事件名*: 服务异常")
+	statusLines = append(statusLines, "*详情*:")
 
 	// CPU usage
 	cpuPercents, err := cpu.Percent(0, false)
 	if err != nil {
 		slog.Error("Failed to get CPU usage", "error", err)
-		return []string{fmt.Sprintf("**Host (%s)**: Failed to get CPU usage: %v", clusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get CPU usage: %v", clusterPrefix, err)}, hostIP, err
 	}
 	cpuAvg := 0.0
 	for _, p := range cpuPercents {
@@ -51,7 +65,7 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 		hasIssue = true
 		cpuTopProcsMsg, _ = getTopCPUProcesses(3)
 	}
-	statusLines = append(statusLines, fmt.Sprintf("CPU使用率: %s", cpuStatus))
+	statusLines = append(statusLines, fmt.Sprintf("**CPU使用率**: %s", cpuStatus))
 	if cpuTopProcsMsg != "" {
 		statusLines = append(statusLines, cpuTopProcsMsg)
 	}
@@ -60,7 +74,7 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 	vm, err := mem.VirtualMemory()
 	if err != nil {
 		slog.Error("Failed to get memory usage", "error", err)
-		return []string{fmt.Sprintf("**Host (%s)**: Failed to get memory usage: %v", clusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get memory usage: %v", clusterPrefix, err)}, hostIP, err
 	}
 	remainingPercent := 100.0 - vm.UsedPercent
 	remainingThreshold := 100.0 - cfg.MemThreshold
@@ -71,7 +85,7 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 		hasIssue = true
 		memTopProcsMsg, _ = getTopMemoryProcesses(3)
 	}
-	statusLines = append(statusLines, fmt.Sprintf("内存剩余率: %s", memStatus))
+	statusLines = append(statusLines, fmt.Sprintf("**内存剩余率**: %s", memStatus))
 	if memTopProcsMsg != "" {
 		statusLines = append(statusLines, memTopProcsMsg)
 	}
@@ -81,13 +95,13 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 	netIO1, err := net.IOCounters(false)
 	if err != nil {
 		slog.Error("Failed to get network IO", "error", err)
-		return []string{fmt.Sprintf("**Host (%s)**: Failed to get network IO: %v", clusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	time.Sleep(1 * time.Second)
 	netIO2, err := net.IOCounters(false)
 	if err != nil {
 		slog.Error("Failed to get network IO", "error", err)
-		return []string{fmt.Sprintf("**Host (%s)**: Failed to get network IO: %v", clusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get network IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	netBytesSent := float64(netIO2[0].BytesSent - netIO1[0].BytesSent) * bytesToGB
 	netBytesRecv := float64(netIO2[0].BytesRecv - netIO1[0].BytesRecv) * bytesToGB
@@ -97,19 +111,19 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 		netIOStatus = fmt.Sprintf("异常❌ %.4f GB/s > %.4f GB/s", netIORate, cfg.NetIOThreshold)
 		hasIssue = true
 	}
-	statusLines = append(statusLines, fmt.Sprintf("网络IO使用率: %s", netIOStatus))
+	statusLines = append(statusLines, fmt.Sprintf("**网络IO使用率**: %s", netIOStatus))
 
 	// Disk IO rate (in GB/s)
 	diskIO1, err := disk.IOCounters()
 	if err != nil {
 		slog.Error("Failed to get disk IO", "error", err)
-		return []string{fmt.Sprintf("**Host (%s)**: Failed to get disk IO: %v", clusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get disk IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	time.Sleep(1 * time.Second)
 	diskIO2, err := disk.IOCounters()
 	if err != nil {
 		slog.Error("Failed to get disk IO", "error", err)
-		return []string{fmt.Sprintf("**Host (%s)**: Failed to get disk IO: %v", clusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get disk IO: %v", clusterPrefix, err)}, hostIP, err
 	}
 	var diskRead, diskWrite float64
 	for name, io1 := range diskIO1 {
@@ -124,13 +138,13 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 		diskIOStatus = fmt.Sprintf("异常❌ %.4f GB/s > %.4f GB/s", diskIORate, cfg.DiskIOThreshold)
 		hasIssue = true
 	}
-	statusLines = append(statusLines, fmt.Sprintf("磁盘IO使用率: %s", diskIOStatus))
+	statusLines = append(statusLines, fmt.Sprintf("**磁盘IO使用率**: %s", diskIOStatus))
 
 	// Disk usage (root)
 	du, err := disk.Usage("/")
 	if err != nil {
 		slog.Error("Failed to get disk usage", "error", err)
-		return []string{fmt.Sprintf("**Host (%s)**: Failed to get disk usage: %v", clusterName, err)}, err
+		return []string{fmt.Sprintf("%s: Failed to get disk usage: %v", clusterPrefix, err)}, hostIP, err
 	}
 	diskStatus := "正常✅"
 	diskTopDirsMsg := ""
@@ -139,40 +153,96 @@ func Host(ctx context.Context, cfg config.HostConfig, clusterName string) ([]str
 		hasIssue = true
 		diskTopDirsMsg, _ = getTopDiskDirectories(3)
 	}
-	statusLines = append(statusLines, fmt.Sprintf("磁盘使用率: %s", diskStatus))
+	statusLines = append(statusLines, fmt.Sprintf("**磁盘使用率**: %s", diskStatus))
 	if diskTopDirsMsg != "" {
 		statusLines = append(statusLines, diskTopDirsMsg)
 	}
 
 	if hasIssue {
-		return []string{strings.Join(statusLines, "\n")}, fmt.Errorf("host issues")
+		return []string{strings.Join(statusLines, "\n")}, hostIP, fmt.Errorf("host issues")
 	}
-	return nil, nil
+	return nil, "", nil
+}
+
+// getPrivateIP retrieves the first non-loopback IPv4 address in private ranges.
+func getPrivateIP() (string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			if isPrivateIP(ipnet.IP) {
+				return ipnet.IP.String(), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no private IP found")
+}
+
+// isPrivateIP checks if an IP is in a private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
+func isPrivateIP(ip net.IP) bool {
+	privateRanges := []struct {
+		start, end net.IP
+	}{
+		{net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255")},
+		{net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255")},
+		{net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255")},
+	}
+	for _, r := range privateRanges {
+		if bytesCompare(ip, r.start) >= 0 && bytesCompare(ip, r.end) <= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// bytesCompare compares two IP addresses as byte slices.
+func bytesCompare(a, b net.IP) int {
+	for i := 0; i < len(a); i++ {
+		if a[i] < b[i] {
+			return -1
+		} else if a[i] > b[i] {
+			return 1
+		}
+	}
+	return 0
 }
 
 // getTopCPUProcesses gets the top N processes by CPU usage.
 func getTopCPUProcesses(n int) (string, error) {
 	procs, err := process.Processes()
 	if err != nil {
+		slog.Error("Failed to get processes for CPU usage", "error", err)
 		return "", err
 	}
 	type procCPU struct {
+		user  string
 		pid   int32
 		name  string
 		cpu   float64
+		stime string
+		tty   string
 	}
 	var top []procCPU
 	for _, p := range procs {
 		cpu, err := p.CPUPercent()
 		if err == nil && cpu > 0 {
 			name, _ := p.Name()
-			top = append(top, procCPU{pid: p.Pid, name: name, cpu: cpu})
+			user, _ := p.Username()
+			createTime, _ := p.CreateTime()
+			stime := time.UnixMilli(createTime).Format("Jan 02 15:04")
+			tty, _ := p.Terminal()
+			if tty == "" {
+				tty = "?"
+			}
+			top = append(top, procCPU{user: user, pid: p.Pid, name: name, cpu: cpu, stime: stime, tty: tty})
 		}
 	}
 	sort.Slice(top, func(i, j int) bool { return top[i].cpu > top[j].cpu })
-	msg := "**最消耗CPU的3个进程:**\n| PID | Name | CPU% |\n|-----|------|------|\n"
+	msg := "**最消耗CPU的3个进程:**\n| User | PID | Name | CPU% | Start Time | TTY |\n|------|-----|------|------|------------|-----|\n"
 	for i := 0; i < n && i < len(top); i++ {
-		msg += fmt.Sprintf("| %d | %s | %.2f |\n", top[i].pid, top[i].name, top[i].cpu)
+		msg += fmt.Sprintf("| %s | %d | %s | %.2f | %s | %s |\n", top[i].user, top[i].pid, top[i].name, top[i].cpu, top[i].stime, top[i].tty)
 	}
 	return msg, nil
 }
@@ -181,25 +251,38 @@ func getTopCPUProcesses(n int) (string, error) {
 func getTopMemoryProcesses(n int) (string, error) {
 	procs, err := process.Processes()
 	if err != nil {
+		slog.Error("Failed to get processes for memory usage", "error", err)
 		return "", err
 	}
 	type procMem struct {
+		user  string
 		pid   int32
 		name  string
 		mem   uint64
+		stime string
+		tty   string
 	}
 	var top []procMem
 	for _, p := range procs {
 		mem, err := p.MemoryInfo()
 		if err == nil && mem.RSS > 0 {
 			name, _ := p.Name()
-			top = append(top, procMem{pid: p.Pid, name: name, mem: mem.RSS})
+			user, _ := p.Username()
+			createTime, _ := p.CreateTime()
+			stime := time.UnixMilli(createTime).Format("Jan 02 15:04")
+			tty, _ := p.Terminal()
+			if tty == "" {
+				tty = "?"
+			}
+			top = append(top, procMem{user: user, pid: p.Pid, name: name, mem: mem.RSS, stime: stime, tty: tty})
 		}
 	}
 	sort.Slice(top, func(i, j int) bool { return top[i].mem > top[j].mem })
-	msg := "**最消耗内存的3个进程:**\n| PID | Name | Memory (bytes) |\n|-----|------|----------------|\n"
+	const bytesToMB = 1.0 / (1024 * 1024) // Convert bytes to MB
+	msg := "**最消耗内存的3个进程:**\n| User | PID | Name | Memory (MB) | Start Time | TTY |\n|------|-----|------|-------------|------------|-----|\n"
 	for i := 0; i < n && i < len(top); i++ {
-		msg += fmt.Sprintf("| %d | %s | %d |\n", top[i].pid, top[i].name, top[i].mem)
+		memMB := float64(top[i].mem) * bytesToMB
+		msg += fmt.Sprintf("| %s | %d | %s | %.2f | %s | %s |\n", top[i].user, top[i].pid, top[i].name, memMB, top[i].stime, top[i].tty)
 	}
 	return msg, nil
 }
@@ -209,12 +292,14 @@ func getTopDiskDirectories(n int) (string, error) {
 	cmd := exec.Command("du", "-sh", "/*")
 	output, err := cmd.Output()
 	if err != nil {
+		slog.Error("Failed to get disk usage for directories", "error", err)
 		return "", err
 	}
 	lines := strings.Split(string(output), "\n")
 	var dirs []struct {
-		size string
-		path string
+		size  float64
+		sizeStr string
+		path  string
 	}
 	for _, line := range lines {
 		if line == "" {
@@ -222,21 +307,23 @@ func getTopDiskDirectories(n int) (string, error) {
 		}
 		fields := strings.Fields(line)
 		if len(fields) == 2 {
-			dirs = append(dirs, struct{ size, path string }{fields[0], fields[1]})
+			size := parseSize(fields[0])
+			dirs = append(dirs, struct{ size, sizeStr, path string }{size, fields[0], fields[1]})
 		}
 	}
-	sort.Slice(dirs, func(i, j int) bool {
-		return parseSize(dirs[i].size) > parseSize(dirs[j].size)
-	})
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].size > dirs[j].size })
 	msg := "**最占用磁盘空间的3个目录:**\n| Size | Path |\n|------|------|\n"
 	for i := 0; i < n && i < len(dirs); i++ {
-		msg += fmt.Sprintf("| %s | %s |\n", dirs[i].size, dirs[i].path)
+		msg += fmt.Sprintf("| %s | %s |\n", dirs[i].sizeStr, dirs[i].path)
 	}
 	return msg, nil
 }
 
 // parseSize parses size strings like "1.0K", "2.5M" to bytes for sorting.
 func parseSize(size string) float64 {
+	if len(size) == 0 {
+		return 0
+	}
 	unit := size[len(size)-1]
 	value, _ := strconv.ParseFloat(size[:len(size)-1], 64)
 	switch unit {
