@@ -15,9 +15,9 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
-	"github.com/yourusername/monitor-service/alert"
-	"github.com/yourusername/monitor-service/config"
-	"github.com/yourusername/monitor-service/util"
+	"monitor-service/alert"
+	"monitor-service/config"
+	"monitor-service/util"
 )
 
 // Host monitors host resources and returns alerts if thresholds are exceeded.
