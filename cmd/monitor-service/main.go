@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spf13/viper"
 	"monitor-service/alert"
 	"monitor-service/config"
 	"monitor-service/monitor"
@@ -31,15 +30,15 @@ func main() {
 	})))
 
 	// Initialize alert bot
-	bot, err := alert.NewAlertBot(cfg.BotToken, cfg.ChatID, cfg.ClusterName, cfg.Debug)
+	bot, err := alert.NewAlertBot(cfg.BotToken, cfg.ChatID, cfg.ClusterName, cfg.ShowHostname)
 	if err != nil {
 		slog.Error("Failed to initialize alert bot", "error", err)
 		os.Exit(1)
 	}
 
 	// Send startup alert
-	startupMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动", "", "info")
-	if err := bot.SendAlert("Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动", "", "info"); err != nil {
+	startupMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动", "", "startup")
+	if err := bot.SendAlert("Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动", "", "startup"); err != nil {
 		slog.Error("Failed to send startup alert", "error", err)
 	} else {
 		slog.Info("Sent startup alert", "message", startupMsg)
@@ -53,8 +52,8 @@ func main() {
 		sig := <-sigCh
 		slog.Info("Received signal, shutting down", "signal", sig)
 		// Send shutdown alert
-		shutdownMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止", "", "info")
-		if err := bot.SendAlert("Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止", "", "info"); err != nil {
+		shutdownMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止", "", "shutdown")
+		if err := bot.SendAlert("Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止", "", "shutdown"); err != nil {
 			slog.Error("Failed to send shutdown alert", "error", err)
 		} else {
 			slog.Info("Sent shutdown alert", "message", shutdownMsg)
