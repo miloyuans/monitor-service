@@ -34,5 +34,5 @@ system_monitoring:
   enabled: false
 cluster_name: "default-cluster"
 show_hostname: false
-alert_silence_duration: 60 # minutes
+alert_silence_duration: 1 # minutes
 check_interval: "30s"

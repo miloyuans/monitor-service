@@ -1,0 +1,39 @@
+# default false
+# monitoring:
+#   enabled: true
+# telegram:
+#   bot_token: "124abc"
+#   chat_id: 123456789
+# rabbitmq:
+#   enabled: false
+#   url: "amqp://guest:guest@localhost:5672/"
+#   cluster_name: "rabbitmq-cluster"
+# redis:
+#   enabled: false
+#   addr: "localhost:6379"
+#   password: ""
+#   db: 0
+#   cluster_name: "redis-cluster"
+#   big_key_threshold: 1000000
+# mysql:
+#   enabled: false
+#   dsn: "user:password@tcp(localhost:3306)/dbname"
+#   cluster_name: "mysql-cluster"
+#   max_connections: 100
+# nacos:
+#   enabled: false
+#   address: "http://localhost:8848"
+#   cluster_name: "nacos-cluster"
+# host_monitoring:
+#   enabled: false
+#   cpu_threshold: 80.0
+#   mem_threshold: 80.0
+#   disk_threshold: 90.0
+#   net_io_threshold: 1.0  # 1 GB/s
+#   disk_io_threshold: 1.0 # 1 GB/s
+# system_monitoring:
+#   enabled: false
+cluster_name: "default-cluster"
+show_hostname: false
+alert_silence_duration: 60 # minutes
+check_interval: "30s"
