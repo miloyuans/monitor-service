@@ -1,10 +1,8 @@
 package alert
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
