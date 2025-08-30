@@ -2,7 +2,6 @@ package monitor
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"monitor-service/alert"
