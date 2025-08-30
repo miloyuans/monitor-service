@@ -17,6 +17,11 @@ import (
 	"monitor-service/util"
 )
 
+type alertKey struct {
+    hash      string
+    timestamp time.Time
+}
+
 func main() {
 	// Initialize logger with JSON handler
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -83,12 +88,10 @@ func main() {
 	defer ticker.Stop()
 
 	// Alert deduplication cache
-	type alertKey struct {
-		hash      string
-		timestamp time.Time
-	}
+	cacheMutex := &sync.Mutex{}
+    //alertCache := make(map[string]alertKey)
 	alertCache := make(map[string]alertKey)
-	cacheMutex := sync.Mutex // Protect concurrent access to alertCache
+	//cacheMutex := sync.Mutex // Protect concurrent access to alertCache
 	alertSilenceDuration := time.Duration(cfg.AlertSilenceDuration) * time.Minute
 
 	for {
