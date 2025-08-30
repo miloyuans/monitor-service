@@ -100,7 +100,8 @@ func main() {
 			slog.Info("Monitoring stopped gracefully", "component", "main")
 			return
 		case <-ticker.C:
-			monitorAndAlert(ctx, cfg, bot, alertCache, &cacheMutex, alertSilenceDuration, interval)
+			//monitorAndAlert(cacheMutex)
+			monitorAndAlert(ctx, cfg, bot, alertCache, cacheMutex, alertSilenceDuration, interval)
 		}
 	}
 }
