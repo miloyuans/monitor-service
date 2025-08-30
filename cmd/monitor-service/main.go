@@ -17,6 +17,12 @@ import (
 	"monitor-service/util"
 )
 
+// alertKey defines the structure for deduplication cache entries.
+type alertKey struct {
+	hash      string
+	timestamp time.Time
+}
+
 func main() {
 	// Initialize logger with JSON handler
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -82,10 +88,6 @@ func main() {
 	defer ticker.Stop()
 
 	// Alert deduplication cache
-	type alertKey struct {
-		hash      string
-		timestamp time.Time
-	}
 	alertCache := make(map[string]alertKey)
 	var cacheMutex sync.Mutex // Protect concurrent access to alertCache
 	alertSilenceDuration := time.Duration(cfg.AlertSilenceDuration) * time.Minute
