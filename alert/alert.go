@@ -67,7 +67,14 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 		header = "🚨 *监控 Monitoring 告警 Alert* 🚨"
 	}
 
-	// Escape Markdown special characters in details to prevent formatting issues
+	// Escape all fields for MarkdownV2 to prevent parsing errors
+	header = escapeMarkdown(header)
+	timestamp = escapeMarkdown(timestamp)
+	clusterName := escapeMarkdown(a.ClusterName)
+	hostname = escapeMarkdown(hostname)
+	hostIP = escapeMarkdown(hostIP)
+	serviceName = escapeMarkdown(serviceName)
+	eventName = escapeMarkdown(eventName)
 	details = escapeMarkdown(details)
 
 	// Build the alert message using strings.Builder for efficiency
@@ -75,11 +82,11 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 	fmt.Fprintf(&msg, "%s\n*时间*: %s\n*环境*: %s\n*主机名*: %s\n*主机IP*: %s\n*服务名*: %s\n*事件名*: %s\n*详情*:\n%s",
 		header,
 		timestamp,
-		escapeMarkdown(a.ClusterName),
-		escapeMarkdown(hostname),
-		escapeMarkdown(hostIP),
-		escapeMarkdown(serviceName),
-		escapeMarkdown(eventName),
+		clusterName,
+		hostname,
+		hostIP,
+		serviceName,
+		eventName,
 		details,
 	)
 	return msg.String()
