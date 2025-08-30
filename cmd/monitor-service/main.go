@@ -17,17 +17,17 @@ import (
 )
 
 func main() {
-	// Load configuration
-	cfg, err := config.LoadConfig("/app/config.yaml")
-	if err != nil {
-		slog.Error("Failed to load config", "error", err)
-		os.Exit(1)
-	}
-
 	// Initialize logger
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
+
+	// Load configuration
+	cfg, err := config.LoadConfig("config.yaml")
+	if err != nil {
+		slog.Error("Failed to load config", "error", err)
+		os.Exit(1)
+	}
 
 	// Initialize alert bot
 	bot, err := alert.NewAlertBot(cfg.Telegram.BotToken, cfg.Telegram.ChatID, cfg.ClusterName, cfg.ShowHostname)
@@ -43,6 +43,9 @@ func main() {
 	} else {
 		slog.Info("Sent startup alert", "message", startupMsg)
 	}
+
+	// Log enabled monitoring features
+	logMonitoringStatus(cfg)
 
 	// Set up signal handling
 	ctx, cancel := context.WithCancel(context.Background())
@@ -91,15 +94,88 @@ func main() {
 	}
 }
 
+// logMonitoringStatus logs the status of all monitoring features.
+func logMonitoringStatus(cfg config.Config) {
+	features := []struct {
+		name    string
+		enabled bool
+	}{
+		{"General Monitoring", cfg.Monitoring.Enabled},
+		{"RabbitMQ Monitoring", cfg.RabbitMQ.Enabled},
+		{"Redis Monitoring", cfg.Redis.Enabled},
+		{"MySQL Monitoring", cfg.MySQL.Enabled},
+		{"Nacos Monitoring", cfg.Nacos.Enabled},
+		{"Host Monitoring", cfg.HostMonitoring.Enabled},
+		{"System Monitoring", cfg.SystemMonitoring.Enabled},
+	}
+
+	for _, feature := range features {
+		if feature.enabled {
+			slog.Info("Monitoring feature enabled", "feature", feature.name)
+		} else {
+			slog.Info("Monitoring feature disabled", "feature", feature.name, "message", fmt.Sprintf("%s is not active", feature.name))
+		}
+	}
+}
+
+// monitorAndAlert runs monitoring tasks and sends alerts using the alert module.
 func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot, alertCache map[string]alertKey, alertSilenceDuration time.Duration) {
 	var allMessages []string
 	var hostIP string
 
-	// Run system monitoring
-	if cfg.SystemMonitoring.Enabled {
-		messages, ip, err := monitor.System(ctx, cfg.SystemMonitoring, bot)
+	// Run general monitoring
+	if cfg.Monitoring.Enabled {
+		messages, ip, err := monitor.General(ctx, cfg.Monitoring, bot)
 		if err != nil {
-			slog.Error("System monitoring failed", "error", err, "component", "main")
+			slog.Error("General monitoring failed", "error", err, "component", "main")
+		}
+		if len(messages) > 0 {
+			allMessages = append(allMessages, messages...)
+			hostIP = ip
+		}
+	}
+
+	// Run RabbitMQ monitoring
+	if cfg.RabbitMQ.Enabled {
+		messages, ip, err := monitor.RabbitMQ(ctx, cfg.RabbitMQ, bot)
+		if err != nil {
+			slog.Error("RabbitMQ monitoring failed", "error", err, "component", "main")
+		}
+		if len(messages) > 0 {
+			allMessages = append(allMessages, messages...)
+			hostIP = ip
+		}
+	}
+
+	// Run Redis monitoring
+	if cfg.Redis.Enabled {
+		messages, ip, err := monitor.Redis(ctx, cfg.Redis, bot)
+		if err != nil {
+			slog.Error("Redis monitoring failed", "error", err, "component", "main")
+		}
+		if len(messages) > 0 {
+			allMessages = append(allMessages, messages...)
+			hostIP = ip
+		}
+	}
+
+	// Run MySQL monitoring
+	if cfg.MySQL.Enabled {
+		messages, ip, err := monitor.MySQL(ctx, cfg.MySQL, bot)
+		if err != nil {
+			slog.Error("MySQL monitoring failed", "error", err, "component", "main")
+		}
+		if len(messages) > 0 {
+			allMessages = append(allMessages, messages...)
+			hostIP = ip
+		}
+	}
+
+	// Run Nacos monitoring
+	if cfg.Nacos.Enabled {
+		messages, ip, err := monitor.Nacos(ctx, cfg.Nacos, bot)
+		if err != nil {
+			slog.Error("Nacos monitoring failed", "error", err, "component", "main")
 		}
 		if len(messages) > 0 {
 			allMessages = append(allMessages, messages...)
@@ -112,6 +188,18 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 		messages, ip, err := monitor.Host(ctx, cfg.HostMonitoring, bot)
 		if err != nil {
 			slog.Error("Host monitoring failed", "error", err, "component", "main")
+		}
+		if len(messages) > 0 {
+			allMessages = append(allMessages, messages...)
+			hostIP = ip
+		}
+	}
+
+	// Run system monitoring
+	if cfg.SystemMonitoring.Enabled {
+		messages, ip, err := monitor.System(ctx, cfg.SystemMonitoring, bot)
+		if err != nil {
+			slog.Error("System monitoring failed", "error", err, "component", "main")
 		}
 		if len(messages) > 0 {
 			allMessages = append(allMessages, messages...)

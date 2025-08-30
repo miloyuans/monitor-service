@@ -1,7 +1,7 @@
 monitoring:
-  enabled: true
+  enabled: false
 telegram:
-  bot_token: "124abc"
+  bot_token: "your-telegram-bot-token"
   chat_id: 123456789
 rabbitmq:
   enabled: false
@@ -13,7 +13,7 @@ redis:
   password: ""
   db: 0
   cluster_name: "redis-cluster"
-  big_key_threshold: 1000000
+  big_key_threshold: 1048576
 mysql:
   enabled: false
   dsn: "user:password@tcp(localhost:3306)/dbname"
@@ -28,11 +28,11 @@ host_monitoring:
   cpu_threshold: 80.0
   mem_threshold: 80.0
   disk_threshold: 90.0
-  net_io_threshold: 1.0  # 1 GB/s
-  disk_io_threshold: 1.0 # 1 GB/s
+  net_io_threshold: 1.0
+  disk_io_threshold: 1.0
 system_monitoring:
   enabled: false
 cluster_name: "default-cluster"
 show_hostname: false
-alert_silence_duration: 1 # minutes
+alert_silence_duration: 5 # minutes
 check_interval: "30s"
