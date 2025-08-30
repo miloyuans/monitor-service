@@ -10,7 +10,7 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	Monitoring           MonitoringConfig `mapstructure:"monitoring"`
+	Monitoring           GeneralConfig    `mapstructure:"monitoring"`
 	Telegram             TelegramConfig   `mapstructure:"telegram"`
 	RabbitMQ             RabbitMQConfig   `mapstructure:"rabbitmq"`
 	Redis                RedisConfig      `mapstructure:"redis"`
@@ -24,8 +24,8 @@ type Config struct {
 	CheckInterval        string           `mapstructure:"check_interval"`
 }
 
-// MonitoringConfig holds general monitoring settings.
-type MonitoringConfig struct {
+// GeneralConfig holds general monitoring settings.
+type GeneralConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 }
 
@@ -39,6 +39,8 @@ type TelegramConfig struct {
 type RabbitMQConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`
 	URL         string `mapstructure:"url"`
+	Username    string `mapstructure:"username"`
+	Password    string `mapstructure:"password"`
 	ClusterName string `mapstructure:"cluster_name"`
 }
 
@@ -89,21 +91,23 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("telegram.bot_token", "")
 	viper.SetDefault("telegram.chat_id", 0)
 	viper.SetDefault("rabbitmq.enabled", false)
-	viper.SetDefault("rabbitmq.url", "")
-	viper.SetDefault("rabbitmq.cluster_name", "")
+	viper.SetDefault("rabbitmq.url", "http://localhost:15672")
+	viper.SetDefault("rabbitmq.username", "guest")
+	viper.SetDefault("rabbitmq.password", "guest")
+	viper.SetDefault("rabbitmq.cluster_name", "rabbitmq-cluster")
 	viper.SetDefault("redis.enabled", false)
-	viper.SetDefault("redis.addr", "")
+	viper.SetDefault("redis.addr", "localhost:6379")
 	viper.SetDefault("redis.password", "")
 	viper.SetDefault("redis.db", 0)
-	viper.SetDefault("redis.cluster_name", "")
+	viper.SetDefault("redis.cluster_name", "redis-cluster")
 	viper.SetDefault("redis.big_key_threshold", 1048576) // 1MB
 	viper.SetDefault("mysql.enabled", false)
-	viper.SetDefault("mysql.dsn", "")
-	viper.SetDefault("mysql.cluster_name", "")
+	viper.SetDefault("mysql.dsn", "root:password@tcp(localhost:3306)/mysql")
+	viper.SetDefault("mysql.cluster_name", "mysql-cluster")
 	viper.SetDefault("mysql.max_connections", 100)
 	viper.SetDefault("nacos.enabled", false)
-	viper.SetDefault("nacos.address", "")
-	viper.SetDefault("nacos.cluster_name", "")
+	viper.SetDefault("nacos.address", "http://localhost:8848")
+	viper.SetDefault("nacos.cluster_name", "nacos-cluster")
 	viper.SetDefault("host_monitoring.enabled", false)
 	viper.SetDefault("host_monitoring.cpu_threshold", 80.0)
 	viper.SetDefault("host_monitoring.mem_threshold", 80.0)
@@ -120,24 +124,25 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetConfigFile(path)
 	viper.SetConfigType("yaml")
 	if err := viper.ReadInConfig(); err != nil {
-		slog.Error("Failed to read config file", "error", err, "path", path)
-		return cfg, err
+		slog.Error("Failed to read config file", "error", err, "path", path, "component", "config")
+		return cfg, fmt.Errorf("failed to read config file %s: %w", path, err)
 	}
 	if err := viper.Unmarshal(&cfg); err != nil {
-		slog.Error("Failed to unmarshal config", "error", err)
-		return cfg, err
+		slog.Error("Failed to unmarshal config", "error", err, "component", "config")
+		return cfg, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
 	if err := cfg.Validate(); err != nil {
-		slog.Error("Config validation failed", "error", err)
-		return cfg, err
+		slog.Error("Config validation failed", "error", err, "component", "config")
+		return cfg, fmt.Errorf("config validation failed: %w", err)
 	}
 
 	// Log idle state if all monitoring features are disabled
 	if !cfg.IsAnyMonitoringEnabled() {
-		slog.Info("All monitoring features are disabled", "message", "System is idle; no monitoring tasks will be executed")
+		slog.Info("All monitoring features are disabled", "message", "System is idle; no monitoring tasks will be executed", "component", "config")
 	}
 
+	slog.Info("Loaded configuration", "path", path, "component", "config")
 	return cfg, nil
 }
 
@@ -148,7 +153,12 @@ func (c Config) Validate() error {
 		return fmt.Errorf("telegram.bot_token is required")
 	}
 	if c.Telegram.ChatID == 0 {
-		return fmt.Errorf("telegram.chat_id is required")
+		return fmt.Errorf("telegram.chat_id is required and must be non-zero")
+	}
+
+	// Validate cluster name
+	if c.ClusterName == "" {
+		return fmt.Errorf("cluster_name is required")
 	}
 
 	// Validate check interval
@@ -169,6 +179,12 @@ func (c Config) Validate() error {
 		if c.RabbitMQ.URL == "" {
 			return fmt.Errorf("rabbitmq.url is required when rabbitmq.enabled is true")
 		}
+		if c.RabbitMQ.Username == "" {
+			return fmt.Errorf("rabbitmq.username is required when rabbitmq.enabled is true")
+		}
+		if c.RabbitMQ.Password == "" {
+			return fmt.Errorf("rabbitmq.password is required when rabbitmq.enabled is true")
+		}
 		if c.RabbitMQ.ClusterName == "" {
 			return fmt.Errorf("rabbitmq.cluster_name is required when rabbitmq.enabled is true")
 		}
@@ -184,6 +200,9 @@ func (c Config) Validate() error {
 		}
 		if c.Redis.BigKeyThreshold <= 0 {
 			return fmt.Errorf("redis.big_key_threshold must be positive")
+		}
+		if c.Redis.DB < 0 {
+			return fmt.Errorf("redis.db must be non-negative")
 		}
 	}
 
@@ -229,9 +248,9 @@ func (c Config) Validate() error {
 		}
 	}
 
-	// Validate cluster name
-	if c.ClusterName == "" {
-		return fmt.Errorf("cluster_name is required")
+	// System monitoring validation (no additional fields currently)
+	if c.SystemMonitoring.Enabled {
+		// No specific validation required yet
 	}
 
 	return nil

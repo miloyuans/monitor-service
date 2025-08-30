@@ -1,9 +1,11 @@
 package alert
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -20,15 +22,25 @@ type AlertBot struct {
 
 // NewAlertBot creates a new Telegram bot for alerts.
 func NewAlertBot(botToken string, chatID int64, clusterName string, showHostname bool) (*AlertBot, error) {
+	if botToken == "" {
+		slog.Error("Bot token is empty", "component", "alert")
+		return nil, fmt.Errorf("bot token is empty")
+	}
+	if chatID == 0 {
+		slog.Error("Chat ID is invalid", "component", "alert")
+		return nil, fmt.Errorf("invalid chat ID")
+	}
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
-		return nil, err
+		slog.Error("Failed to initialize Telegram bot", "error", err, "component", "alert")
+		return nil, fmt.Errorf("failed to initialize Telegram bot: %w", err)
 	}
 	hostname, err := os.Hostname()
 	if err != nil {
 		slog.Warn("Failed to get hostname", "error", err, "component", "alert")
 		hostname = "unknown"
 	}
+	slog.Info("Initialized alert bot", "cluster_name", clusterName, "show_hostname", showHostname, "component", "alert")
 	return &AlertBot{
 		Bot:          bot,
 		ChatID:       chatID,
@@ -39,7 +51,7 @@ func NewAlertBot(botToken string, chatID int64, clusterName string, showHostname
 }
 
 // FormatAlert creates a standardized Markdown alert message.
-func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP string, alertType string) string {
+func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertType string) string {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	hostname := a.Hostname
 	if !a.ShowHostname {
@@ -54,27 +66,57 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP string, a
 	default:
 		header = "🚨 *监控 Monitoring 告警 Alert* 🚨"
 	}
-	return fmt.Sprintf("%s\n*时间*: %s\n*环境*: %s\n*主机名*: %s\n*主机IP*: %s\n*服务名*: %s\n*事件名*: %s\n*详情*:\n%s",
+
+	// Escape Markdown special characters in details to prevent formatting issues
+	details = escapeMarkdown(details)
+
+	// Build the alert message using strings.Builder for efficiency
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "%s\n*时间*: %s\n*环境*: %s\n*主机名*: %s\n*主机IP*: %s\n*服务名*: %s\n*事件名*: %s\n*详情*:\n%s",
 		header,
 		timestamp,
-		a.ClusterName,
-		hostname,
-		hostIP,
-		serviceName,
-		eventName,
+		escapeMarkdown(a.ClusterName),
+		escapeMarkdown(hostname),
+		escapeMarkdown(hostIP),
+		escapeMarkdown(serviceName),
+		escapeMarkdown(eventName),
 		details,
 	)
+	return msg.String()
 }
 
 // SendAlert sends a Telegram alert with the provided service name, event name, details, and host IP.
-func (a *AlertBot) SendAlert(serviceName, eventName, details, hostIP string, alertType string) error {
+func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, details, hostIP, alertType string) error {
 	message := a.FormatAlert(serviceName, eventName, details, hostIP, alertType)
 	msg := tgbotapi.NewMessage(a.ChatID, message)
-	msg.ParseMode = "Markdown"
-	if _, err := a.Bot.Send(msg); err != nil {
-		slog.Error("Failed to send Telegram alert", "error", err, "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
-		return err
+	msg.ParseMode = tgbotapi.ModeMarkdownV2 // Use MarkdownV2 for better escaping support
+
+	// Send message with context
+	ch := make(chan error, 1)
+	go func() {
+		_, err := a.Bot.Send(msg)
+		ch <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+		slog.Warn("Alert sending cancelled", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
+		return ctx.Err()
+	case err := <-ch:
+		if err != nil {
+			slog.Error("Failed to send Telegram alert", "error", err, "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "alert_type", alertType, "component", "alert")
+			return fmt.Errorf("failed to send Telegram alert: %w", err)
+		}
+		slog.Info("Sent Telegram alert", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "alert_type", alertType, "component", "alert")
+		return nil
 	}
-	slog.Info("Sent Telegram alert", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
-	return nil
+}
+
+// escapeMarkdown escapes Telegram MarkdownV2 special characters to prevent formatting issues.
+func escapeMarkdown(text string) string {
+	specialChars := []string{"_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"}
+	for _, char := range specialChars {
+		text = strings.ReplaceAll(text, char, "\\"+char)
+	}
+	return text
 }

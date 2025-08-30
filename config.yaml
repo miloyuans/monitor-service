@@ -1,11 +1,18 @@
+cluster_name: "default-cluster"
+show_hostname: false
+check_interval: "30s"
+# minutes
+alert_silence_duration: 5
+telegram:
+  bot_token: ""
+  chat_id: ""
 monitoring:
   enabled: false
-telegram:
-  bot_token: "your-telegram-bot-token"
-  chat_id: 123456789
 rabbitmq:
   enabled: false
-  url: "amqp://guest:guest@localhost:5672/"
+  url: "http://localhost:15672"
+  username: "guest"
+  password: "guest"
   cluster_name: "rabbitmq-cluster"
 redis:
   enabled: false
@@ -16,7 +23,7 @@ redis:
   big_key_threshold: 1048576
 mysql:
   enabled: false
-  dsn: "user:password@tcp(localhost:3306)/dbname"
+  dsn: "root:password@tcp(localhost:3306)/mysql"
   cluster_name: "mysql-cluster"
   max_connections: 100
 nacos:
@@ -32,7 +39,3 @@ host_monitoring:
   disk_io_threshold: 1.0
 system_monitoring:
   enabled: false
-cluster_name: "default-cluster"
-show_hostname: false
-alert_silence_duration: 5 # minutes
-check_interval: "30s"
