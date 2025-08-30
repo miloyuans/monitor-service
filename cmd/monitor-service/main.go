@@ -43,10 +43,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Send startup alert
+	// Get private IP for startup and shutdown alerts
 	ctx := context.Background()
-	startupMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "✅启动✅", "监控服务已启动✅", "", "startup")
-	if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "✅启动✅", "监控服务已启动✅", "", "startup"); err != nil {
+	hostIP, err := util.GetPrivateIP()
+	if err != nil {
+		slog.Warn("Failed to get private IP for startup alert", "error", err, "component", "main")
+		hostIP = "unknown"
+	}
+
+	// Send startup alert
+	startupMsg := bot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "✅启动✅", "监控服务已启动✅", hostIP, "startup")
+	if err := bot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "✅启动✅", "监控服务已启动✅", hostIP, "startup"); err != nil {
 		slog.Error("Failed to send startup alert", "error", err, "component", "main")
 	} else {
 		slog.Info("Sent startup alert", "message", startupMsg, "component", "main")
@@ -59,8 +66,8 @@ func main() {
 	interval, err := time.ParseDuration(cfg.CheckInterval)
 	if err != nil {
 		slog.Error("Invalid check interval", "interval", cfg.CheckInterval, "error", err, "component", "main")
-		startupMsg = bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "异常", fmt.Sprintf("无效的检查间隔: %v", err), "", "alert")
-		if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "异常", fmt.Sprintf("无效的检查间隔: %v", err), "", "alert"); err != nil {
+		startupMsg = bot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert")
+		if err := bot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert"); err != nil {
 			slog.Error("Failed to send alert", "error", err, "component", "main")
 		}
 		os.Exit(1)
@@ -74,8 +81,8 @@ func main() {
 		sig := <-sigCh
 		slog.Info("Received signal, initiating shutdown", "signal", sig, "component", "main")
 		// Send shutdown alert
-		shutdownMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "❌停止❌", "监控服务已停止❌", "", "shutdown")
-		if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "❌停止❌", "监控服务已停止❌", "", "shutdown"); err != nil {
+		shutdownMsg := bot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "❌停止❌", "监控服务已停止❌", hostIP, "shutdown")
+		if err := bot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "❌停止❌", "监控服务已停止❌", hostIP, "shutdown"); err != nil {
 			slog.Error("Failed to send shutdown alert", "error", err, "component", "main")
 		} else {
 			slog.Info("Sent shutdown alert", "message", shutdownMsg, "component", "main")
@@ -136,52 +143,60 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 
 	// Define monitoring tasks
 	monitors := []struct {
-		name    string
-		enabled bool
-		fn      func(context.Context, interface{}, *alert.AlertBot) ([]string, string, error)
-		cfg     interface{}
+		name        string
+		enabled     bool
+		fn          func(context.Context, interface{}, *alert.AlertBot) ([]string, string, error)
+		cfg         interface{}
+		serviceName string
 	}{
 		{
-			name:    "General",
-			enabled: cfg.Monitoring.Enabled,
-			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.General(ctx, cfg.(config.GeneralConfig), bot) },
-			cfg:     cfg.Monitoring,
+			name:        "General",
+			enabled:     cfg.Monitoring.Enabled,
+			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.General(ctx, cfg.(config.GeneralConfig), bot) },
+			cfg:         cfg.Monitoring,
+			serviceName: "通用告警",
 		},
 		{
-			name:    "RabbitMQ",
-			enabled: cfg.RabbitMQ.Enabled,
-			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.RabbitMQ(ctx, cfg.(config.RabbitMQConfig), bot) },
-			cfg:     cfg.RabbitMQ,
+			name:        "RabbitMQ",
+			enabled:     cfg.RabbitMQ.Enabled,
+			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.RabbitMQ(ctx, cfg.(config.RabbitMQConfig), bot) },
+			cfg:         cfg.RabbitMQ,
+			serviceName: "RabbitMQ告警",
 		},
 		{
-			name:    "Redis",
-			enabled: cfg.Redis.Enabled,
-			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Redis(ctx, cfg.(config.RedisConfig), bot) },
-			cfg:     cfg.Redis,
+			name:        "Redis",
+			enabled:     cfg.Redis.Enabled,
+			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Redis(ctx, cfg.(config.RedisConfig), bot) },
+			cfg:         cfg.Redis,
+			serviceName: "Redis告警",
 		},
 		{
-			name:    "MySQL",
-			enabled: cfg.MySQL.Enabled,
-			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.MySQL(ctx, cfg.(config.MySQLConfig), bot) },
-			cfg:     cfg.MySQL,
+			name:        "MySQL",
+			enabled:     cfg.MySQL.Enabled,
+			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.MySQL(ctx, cfg.(config.MySQLConfig), bot) },
+			cfg:         cfg.MySQL,
+			serviceName: "数据库告警",
 		},
 		{
-			name:    "Nacos",
-			enabled: cfg.Nacos.Enabled,
-			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Nacos(ctx, cfg.(config.NacosConfig), bot) },
-			cfg:     cfg.Nacos,
+			name:        "Nacos",
+			enabled:     cfg.Nacos.Enabled,
+			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Nacos(ctx, cfg.(config.NacosConfig), bot) },
+			cfg:         cfg.Nacos,
+			serviceName: "Nacos告警",
 		},
 		{
-			name:    "Host",
-			enabled: cfg.HostMonitoring.Enabled,
-			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Host(ctx, cfg.(config.HostConfig), bot) },
-			cfg:     cfg.HostMonitoring,
+			name:        "Host",
+			enabled:     cfg.HostMonitoring.Enabled,
+			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Host(ctx, cfg.(config.HostConfig), bot) },
+			cfg:         cfg.HostMonitoring,
+			serviceName: "主机告警",
 		},
 		{
-			name:    "System",
-			enabled: cfg.SystemMonitoring.Enabled,
-			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.System(ctx, cfg.(config.SystemConfig), bot) },
-			cfg:     cfg.SystemMonitoring,
+			name:        "System",
+			enabled:     cfg.SystemMonitoring.Enabled,
+			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.System(ctx, cfg.(config.SystemConfig), bot) },
+			cfg:         cfg.SystemMonitoring,
+			serviceName: "系统告警",
 		},
 	}
 
@@ -193,7 +208,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 		}
 
 		wg.Add(1)
-		go func(name string, fn func(context.Context, interface{}, *alert.AlertBot) ([]string, string, error), cfg interface{}) {
+		go func(name, serviceName string, fn func(context.Context, interface{}, *alert.AlertBot) ([]string, string, error), cfg interface{}) {
 			defer wg.Done()
 			// Create a task-specific context with timeout
 			taskCtx, taskCancel := context.WithTimeout(ctx, checkInterval)
@@ -205,13 +220,23 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 			}
 			if len(messages) > 0 {
 				mu.Lock()
+				// Update serviceName in alert messages to reflect module-specific name
+				for i, msg := range messages {
+					parts := strings.SplitN(msg, "*服务名*: ", 2)
+					if len(parts) == 2 {
+						lines := strings.SplitN(parts[1], "\n", 2)
+						if len(lines) == 2 {
+							messages[i] = parts[0] + "*服务名*: " + alert.EscapeMarkdown(serviceName) + "\n" + lines[1]
+						}
+					}
+				}
 				allMessages = append(allMessages, messages...)
 				if ip != "" {
 					hostIP = ip // Use the last non-empty IP
 				}
 				mu.Unlock()
 			}
-		}(m.name, m.fn, m.cfg)
+		}(m.name, m.serviceName, m.fn, m.cfg)
 	}
 	wg.Wait()
 
@@ -266,7 +291,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 		}
 
 		// Format and send combined alert
-		serviceName := fmt.Sprintf("Monitor Service (%s)", bot.ClusterName)
+		serviceName := fmt.Sprintf("Monitor Service %s", cfg.ClusterName)
 		combinedMsg := bot.FormatAlert(serviceName, "服务异常", details.String(), hostIP, "alert")
 		slog.Debug("Sending combined alert", "message", combinedMsg, "component", "main")
 		if err := bot.SendAlert(ctx, serviceName, "服务异常", details.String(), hostIP, "alert"); err != nil {
