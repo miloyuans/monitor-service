@@ -29,7 +29,7 @@ func main() {
 	})))
 
 	// Load configuration
-	cfg, err := config.LoadConfig("config.yaml")
+	cfg, err := config.LoadConfig("/app/config.yaml")
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err, "component", "main")
 		os.Exit(1)
