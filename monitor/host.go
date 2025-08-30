@@ -3,7 +3,9 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -366,7 +368,6 @@ func getTopMemoryProcesses(ctx context.Context, procs []*process.Process, n int)
 func getTopDiskDirectories(ctx context.Context, n int) (string, error) {
 	// Use platform-specific command
 	var cmd *exec.Cmd
-	// Check for Windows; adjust command if necessary
 	if runtime.GOOS == "windows" {
 		slog.Warn("getTopDiskDirectories not implemented for Windows", "component", "host")
 		return "", fmt.Errorf("disk usage monitoring not supported on Windows")
