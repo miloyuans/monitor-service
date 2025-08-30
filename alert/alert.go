@@ -68,14 +68,14 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 	}
 
 	// Escape all fields for MarkdownV2 to prevent parsing errors
-	header = escapeMarkdown(header)
-	timestamp = escapeMarkdown(timestamp)
-	clusterName := escapeMarkdown(a.ClusterName)
-	hostname = escapeMarkdown(hostname)
-	hostIP = escapeMarkdown(hostIP)
-	serviceName = escapeMarkdown(serviceName)
-	eventName = escapeMarkdown(eventName)
-	details = escapeMarkdown(details)
+	header = EscapeMarkdown(header)
+	timestamp = EscapeMarkdown(timestamp)
+	clusterName := EscapeMarkdown(a.ClusterName)
+	hostname = EscapeMarkdown(hostname)
+	hostIP = EscapeMarkdown(hostIP)
+	serviceName = EscapeMarkdown(serviceName)
+	eventName = EscapeMarkdown(eventName)
+	details = EscapeMarkdown(details)
 
 	// Build the alert message using strings.Builder for efficiency
 	var msg strings.Builder
@@ -119,8 +119,8 @@ func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, detail
 	}
 }
 
-// escapeMarkdown escapes Telegram MarkdownV2 special characters to prevent formatting issues.
-func escapeMarkdown(text string) string {
+// EscapeMarkdown escapes Telegram MarkdownV2 special characters to prevent formatting issues.
+func EscapeMarkdown(text string) string {
 	specialChars := []string{"_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"}
 	for _, char := range specialChars {
 		text = strings.ReplaceAll(text, char, "\\"+char)
