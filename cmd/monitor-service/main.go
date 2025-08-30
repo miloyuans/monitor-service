@@ -53,7 +53,8 @@ func main() {
 	interval, err := time.ParseDuration(cfg.CheckInterval)
 	if err != nil {
 		slog.Error("Invalid check interval", "interval", cfg.CheckInterval, "error", err, "component", "main")
-		startupMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务异常", fmt.Sprintf("无效的检查间隔: %v", err), "", "alert")
+		// Reuse startupMsg variable
+		startupMsg = bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务异常", fmt.Sprintf("无效的检查间隔: %v", err), "", "alert")
 		if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "服务异常", fmt.Sprintf("无效的检查间隔: %v", err), "", "alert"); err != nil {
 			slog.Error("Failed to send alert", "error", err, "component", "main")
 		}
@@ -87,7 +88,7 @@ func main() {
 		timestamp time.Time
 	}
 	alertCache := make(map[string]alertKey)
-	var cacheMutex sync.Mutex // Protect concurrent access to alertCache
+	cacheMutex := sync.Mutex // Protect concurrent access to alertCache
 	alertSilenceDuration := time.Duration(cfg.AlertSilenceDuration) * time.Minute
 
 	for {
@@ -96,7 +97,7 @@ func main() {
 			slog.Info("Monitoring stopped gracefully", "component", "main")
 			return
 		case <-ticker.C:
-			monitorAndAlert(ctx, cfg, bot, alertCache, alertSilenceDuration, interval)
+			monitorAndAlert(ctx, cfg, bot, alertCache, &cacheMutex, alertSilenceDuration, interval)
 		}
 	}
 }
@@ -126,7 +127,7 @@ func logMonitoringStatus(cfg config.Config) {
 }
 
 // monitorAndAlert runs monitoring tasks concurrently and sends deduplicated alerts.
-func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot, alertCache map[string]alertKey, alertSilenceDuration time.Duration, checkInterval time.Duration) {
+func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot, alertCache map[string]alertKey, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, checkInterval time.Duration) {
 	var allMessages []string
 	var hostIP string
 	var mu sync.Mutex // Protect allMessages and hostIP
@@ -270,10 +271,16 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 			slog.Error("Failed to send combined alert", "error", err, "component", "main")
 		} else {
 			slog.Info("Sent combined alert", "message", combinedMsg, "component", "main")
-			alertCache[hash] = alertKey{hash: hash, timestamp: now}
+			cacheMutex.Lock()
+			alertCache[hash] = struct {
+				hash      string
+				timestamp time.Time
+			}{hash: hash, timestamp: now}
+			cacheMutex.Unlock()
 		}
 
 		// Clean up old cache entries
+		cacheMutex.Lock()
 		for h, cache := range alertCache {
 			if now.Sub(cache.timestamp) >= alertSilenceDuration {
 				delete(alertCache, h)
