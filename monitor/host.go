@@ -246,7 +246,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	}
 
 	if hasIssue {
-		slog.Info("Host resource issues detected", "cpu", cpuStatus, "memory", memStatus, "net_io", netIOStatus, "disk_io", diskIOStatus, "disk", diskStatus, "component", "host")
+		slog.Info("Host resource issues detected", "cpu", cpuStatus, "memory", memStatus, "net_io", netIOStatus, "disk_io", diskIOStatus, "disk_io_rate", diskIORate, "disk", diskStatus, "component", "host")
 		msg := bot.FormatAlert(
 			fmt.Sprintf("Host (%s)", bot.ClusterName),
 			"服务异常",
@@ -303,9 +303,16 @@ func getTopCPUProcesses(ctx context.Context, procs []*process.Process, n int) (s
 	}
 	sort.Slice(top, func(i, j int) bool { return top[i].cpu > top[j].cpu })
 	var msg strings.Builder
-	msg.WriteString("\n**最消耗 CPU 的 3 个进程**:\n| User | PID | Name | CPU% | Start Time | TTY |\n|------|-----|------|------|------------|-----|\n")
+	msg.WriteString("\n**最消耗 CPU 的 3 个进程**:\n| User | PID | Name | CPU% | Start Time | TTY |\n|\\------|\\-----|\\------|\\------|\\------------|\\-----|\n")
 	for i := 0; i < n && i < len(top); i++ {
-		fmt.Fprintf(&msg, "| %s | %d | %s | %.2f | %s | %s |\n", top[i].user, top[i].pid, top[i].name, top[i].cpu, top[i].stime, top[i].tty)
+		fmt.Fprintf(&msg, "| %s | %d | %s | %.2f | %s | %s |\n",
+			alert.EscapeMarkdown(top[i].user),
+			top[i].pid,
+			alert.EscapeMarkdown(top[i].name),
+			top[i].cpu,
+			alert.EscapeMarkdown(top[i].stime),
+			alert.EscapeMarkdown(top[i].tty),
+		)
 	}
 	return msg.String(), nil
 }
@@ -354,10 +361,17 @@ func getTopMemoryProcesses(ctx context.Context, procs []*process.Process, n int)
 	sort.Slice(top, func(i, j int) bool { return top[i].mem > top[j].mem })
 	const bytesToMB = 1.0 / (1024 * 1024) // Convert bytes to MB
 	var msg strings.Builder
-	msg.WriteString("\n**最消耗内存的 3 个进程**:\n| User | PID | Name | Memory (MB) | Start Time | TTY |\n|------|-----|------|-------------|------------|-----|\n")
+	msg.WriteString("\n**最消耗内存的 3 个进程**:\n| User | PID | Name | Memory (MB) | Start Time | TTY |\n|\\------|\\-----|\\------|\\-------------|\\------------|\\-----|\n")
 	for i := 0; i < n && i < len(top); i++ {
 		memMB := float64(top[i].mem) * bytesToMB
-		fmt.Fprintf(&msg, "| %s | %d | %s | %.2f | %s | %s |\n", top[i].user, top[i].pid, top[i].name, memMB, top[i].stime, top[i].tty)
+		fmt.Fprintf(&msg, "| %s | %d | %s | %.2f | %s | %s |\n",
+			alert.EscapeMarkdown(top[i].user),
+			top[i].pid,
+			alert.EscapeMarkdown(top[i].name),
+			memMB,
+			alert.EscapeMarkdown(top[i].stime),
+			alert.EscapeMarkdown(top[i].tty),
+		)
 	}
 	return msg.String(), nil
 }
@@ -404,9 +418,9 @@ func getTopDiskDirectories(ctx context.Context, n int) (string, error) {
 	}
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].size > dirs[j].size })
 	var msg strings.Builder
-	msg.WriteString("\n**最占用磁盘空间的 3 个目录**:\n| Size | Path |\n|------|------|\n")
+	msg.WriteString("\n**最占用磁盘空间的 3 个目录**:\n| Size | Path |\n|\\------|\\------|\n")
 	for i := 0; i < n && i < len(dirs); i++ {
-		fmt.Fprintf(&msg, "| %s | %s |\n", dirs[i].sizeStr, dirs[i].path)
+		fmt.Fprintf(&msg, "| %s | %s |\n", alert.EscapeMarkdown(dirs[i].sizeStr), alert.EscapeMarkdown(dirs[i].path))
 	}
 	return msg.String(), nil
 }

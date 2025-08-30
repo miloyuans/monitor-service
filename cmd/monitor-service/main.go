@@ -45,8 +45,8 @@ func main() {
 
 	// Send startup alert
 	ctx := context.Background()
-	startupMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动", "", "startup")
-	if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动", "", "startup"); err != nil {
+	startupMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动✅", "", "startup")
+	if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "服务启动", "监控服务已启动✅", "", "startup"); err != nil {
 		slog.Error("Failed to send startup alert", "error", err, "component", "main")
 	} else {
 		slog.Info("Sent startup alert", "message", startupMsg, "component", "main")
@@ -74,8 +74,8 @@ func main() {
 		sig := <-sigCh
 		slog.Info("Received signal, initiating shutdown", "signal", sig, "component", "main")
 		// Send shutdown alert
-		shutdownMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止", "", "shutdown")
-		if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止", "", "shutdown"); err != nil {
+		shutdownMsg := bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止❌", "", "shutdown")
+		if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "服务停止", "监控服务已停止❌", "", "shutdown"); err != nil {
 			slog.Error("Failed to send shutdown alert", "error", err, "component", "main")
 		} else {
 			slog.Info("Sent shutdown alert", "message", shutdownMsg, "component", "main")
