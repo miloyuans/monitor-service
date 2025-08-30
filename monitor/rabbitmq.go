@@ -15,8 +15,6 @@ import (
 
 // RabbitMQ monitors RabbitMQ instance and returns alerts if issues are detected.
 func RabbitMQ(ctx context.Context, cfg config.RabbitMQConfig, bot *alert.AlertBot) ([]string, string, error) {
-	var messages []string
-
 	// Get private IP
 	hostIP, err := util.GetPrivateIP()
 	if err != nil {
@@ -111,8 +109,7 @@ func RabbitMQ(ctx context.Context, cfg config.RabbitMQConfig, bot *alert.AlertBo
 // listQueues retrieves all RabbitMQ queues and their details.
 func listQueues(ch *amqp091.Channel) ([]amqp091.Queue, error) {
 	var queues []amqp091.Queue
-	// RabbitMQ does not provide a direct API to list queues, so we assume a list of known queues or use a management API.
-	// For simplicity, we'll check a few example queues. In practice, use the management API or a queue list.
+	// RabbitMQ does not provide a direct API to list queues, so we assume a list of known queues.
 	exampleQueues := []string{"queue1", "queue2", "queue3"} // Replace with actual queue names or fetch dynamically
 	for _, queueName := range exampleQueues {
 		select {

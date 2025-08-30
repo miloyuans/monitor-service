@@ -23,8 +23,6 @@ import (
 
 // Host monitors host resources and returns alerts if thresholds are exceeded.
 func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]string, string, error) {
-	var messages []string
-
 	// Get private IP
 	hostIP, err := util.GetPrivateIP()
 	if err != nil {
