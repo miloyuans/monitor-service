@@ -17,11 +17,6 @@ import (
 	"monitor-service/util"
 )
 
-type alertKey struct {
-    hash      string
-    timestamp time.Time
-}
-
 func main() {
 	// Initialize logger with JSON handler
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -58,7 +53,6 @@ func main() {
 	interval, err := time.ParseDuration(cfg.CheckInterval)
 	if err != nil {
 		slog.Error("Invalid check interval", "interval", cfg.CheckInterval, "error", err, "component", "main")
-		// Reuse startupMsg variable
 		startupMsg = bot.FormatAlert("Monitor Service ("+cfg.ClusterName+")", "服务异常", fmt.Sprintf("无效的检查间隔: %v", err), "", "alert")
 		if err := bot.SendAlert(ctx, "Monitor Service ("+cfg.ClusterName+")", "服务异常", fmt.Sprintf("无效的检查间隔: %v", err), "", "alert"); err != nil {
 			slog.Error("Failed to send alert", "error", err, "component", "main")
@@ -88,10 +82,12 @@ func main() {
 	defer ticker.Stop()
 
 	// Alert deduplication cache
-	cacheMutex := &sync.Mutex{}
-    //alertCache := make(map[string]alertKey)
+	type alertKey struct {
+		hash      string
+		timestamp time.Time
+	}
 	alertCache := make(map[string]alertKey)
-	//cacheMutex := sync.Mutex // Protect concurrent access to alertCache
+	var cacheMutex sync.Mutex // Protect concurrent access to alertCache
 	alertSilenceDuration := time.Duration(cfg.AlertSilenceDuration) * time.Minute
 
 	for {
@@ -100,8 +96,7 @@ func main() {
 			slog.Info("Monitoring stopped gracefully", "component", "main")
 			return
 		case <-ticker.C:
-			//monitorAndAlert(cacheMutex)
-			monitorAndAlert(ctx, cfg, bot, alertCache, cacheMutex, alertSilenceDuration, interval)
+			monitorAndAlert(ctx, cfg, bot, alertCache, &cacheMutex, alertSilenceDuration, interval)
 		}
 	}
 }
@@ -275,16 +270,10 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 			slog.Error("Failed to send combined alert", "error", err, "component", "main")
 		} else {
 			slog.Info("Sent combined alert", "message", combinedMsg, "component", "main")
-			cacheMutex.Lock()
-			alertCache[hash] = struct {
-				hash      string
-				timestamp time.Time
-			}{hash: hash, timestamp: now}
-			cacheMutex.Unlock()
+			alertCache[hash] = alertKey{hash: hash, timestamp: now}
 		}
 
 		// Clean up old cache entries
-		cacheMutex.Lock()
 		for h, cache := range alertCache {
 			if now.Sub(cache.timestamp) >= alertSilenceDuration {
 				delete(alertCache, h)
