@@ -68,8 +68,8 @@ type NacosConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`
 	Address     string `mapstructure:"address"`
 	ClusterName string `mapstructure:"cluster_name"`
-	NacosDataID  string `mapstructure:"nacos_data_id"`  // Data ID for config check
-	NacosGroup   string `mapstructure:"nacos_group"`    // Group for config check
+	NacosDataID  string `mapstructure:"nacos_data_id"`
+	NacosGroup   string `mapstructure:"nacos_group"`
 }
 
 // HostConfig holds host monitoring configuration.
