@@ -22,10 +22,14 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
+	// Parse command-line flags
+	configPath := flag.String("config", "config.yaml", "Path to configuration file")
+	flag.Parse()
+
 	// Load configuration
-	cfg, err := config.LoadConfig("/app/config.yaml")
+	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
-		slog.Error("Failed to load configuration", "error", err, "component", "main")
+		slog.Error("Failed to load configuration", "error", err, "path", *configPath, "component", "main")
 		os.Exit(1)
 	}
 
@@ -47,7 +51,7 @@ func main() {
 	// Send startup alert
 	startupMsg := bot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "✅启动✅", "监控服务已启动✅", hostIP, "startup")
 	if err := bot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "✅启动✅", "监控服务已启动✅", hostIP, "startup"); err != nil {
-		slog.Error("Failed to send startup alert", "error", err, "component", "main")
+		slog.Error("Failed to send startup alert", "error", err, "message", startupMsg, "component", "main")
 	} else {
 		slog.Info("Sent startup alert", "message", startupMsg, "component", "main")
 	}
@@ -61,7 +65,7 @@ func main() {
 		slog.Error("Invalid check interval", "interval", cfg.CheckInterval, "error", err, "component", "main")
 		startupMsg = bot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert")
 		if err := bot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert"); err != nil {
-			slog.Error("Failed to send alert", "error", err, "component", "main")
+			slog.Error("Failed to send alert for invalid check interval", "error", err, "message", startupMsg, "component", "main")
 		}
 		os.Exit(1)
 	}
@@ -75,8 +79,8 @@ func main() {
 		slog.Info("Received signal, initiating shutdown", "signal", sig, "component", "main")
 		// Send shutdown alert
 		shutdownMsg := bot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "❌停止❌", "监控服务已停止❌", hostIP, "shutdown")
-		if err := bot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "❌停止❌", "监控服务已停止❌", hostIP, "shutdown"); err != nil {
-			slog.Error("Failed to send shutdown alert", "error", err, "component", "main")
+		if err := bot.SendAlert(context.Background(), fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "❌停止❌", "监控服务已停止❌", hostIP, "shutdown"); err != nil {
+			slog.Error("Failed to send shutdown alert", "error", err, "message", shutdownMsg, "component", "main")
 		} else {
 			slog.Info("Sent shutdown alert", "message", shutdownMsg, "component", "main")
 		}
@@ -133,7 +137,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 
 	// Define monitoring tasks
 	monitors := []struct {
-		name string
+		name    string
 		enabled bool
 		fn      func(context.Context, interface{}, *alert.AlertBot, map[string]time.Time, *sync.Mutex, time.Duration) error
 		cfg     interface{}
@@ -224,7 +228,14 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 			cacheMutex.Unlock()
 
 			if err := fn(taskCtx, cfg, bot, cache, cacheMutex, alertSilenceDuration); err != nil {
-				slog.Error("Monitoring task failed", "monitor", name, "error", err, "component", "main")
+				// Handle expected issues (e.g., user/process changes in System) differently
+				if name == "System" && err.Error() == "system issues detected" {
+					slog.Info("System monitor detected expected issues (e.g., user or process changes)", "monitor", name, "error", err, "component", "main")
+				} else {
+					slog.Error("Monitoring task failed", "monitor", name, "error", err, "component", "main")
+				}
+			} else {
+				slog.Debug("Monitoring task completed successfully", "monitor", name, "component", "main")
 			}
 		}(m.name, m.fn, m.cfg)
 	}
