@@ -72,12 +72,12 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
 			slog.Error("Failed to cleanup historical files", "error", err, "component", "system")
 			msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法清理历史文件: %v", err), hostIP, "alert")
-			return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法清理历史文件: %v", err), hostIP, "alert", msg)
+			return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法清理历史文件: %v", err), hostIP, "alert", msg)
 		}
 		if err := updateLastCleanup(lastCleanupFile); err != nil {
 			slog.Error("Failed to update last cleanup time", "error", err, "component", "system")
 			msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法更新最后清理时间: %v", err), hostIP, "alert")
-			return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法更新最后清理时间: %v", err), hostIP, "alert", msg)
+			return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法更新最后清理时间: %v", err), hostIP, "alert", msg)
 		}
 	}
 
@@ -96,14 +96,14 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	if err != nil {
 		slog.Error("Failed to get current users", "error", err, "component", "system")
 		msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法获取当前用户列表: %v", err), hostIP, "alert")
-		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法获取当前用户列表: %v", err), hostIP, "alert", msg)
+		return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法获取当前用户列表: %v", err), hostIP, "alert", msg)
 	}
 	slog.Debug("Retrieved current users", "count", len(currentUsers), "component", "system")
 	initialUsers, err := loadInitialUsers(userInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial users", "error", err, "component", "system")
 		msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法加载初始用户列表: %v", err), hostIP, "alert")
-		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法加载初始用户列表: %v", err), hostIP, "alert", msg)
+		return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法加载初始用户列表: %v", err), hostIP, "alert", msg)
 	}
 	slog.Debug("Loaded initial users", "count", len(initialUsers), "component", "system")
 	if len(initialUsers) == 0 {
@@ -112,7 +112,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
 			slog.Error("Failed to save initial users", "error", err, "component", "system")
 			msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法保存初始用户列表: %v", err), hostIP, "alert")
-			return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法保存初始用户列表: %v", err), hostIP, "alert", msg)
+			return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法保存初始用户列表: %v", err), hostIP, "alert", msg)
 		}
 	} else {
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
@@ -126,20 +126,20 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 			}
 			slog.Info("Detected user changes", "added_users", addedUsers, "removed_users", removedUsers, "component", "system")
 			msg := bot.FormatAlert("系统告警", "用户变更", details.String(), hostIP, "alert")
-			if err := sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "用户变更", details.String(), hostIP, "alert", msg); err != nil {
+			if err := sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "用户变更", details.String(), hostIP, "alert", msg); err != nil {
 				return err
 			}
 			// Log change incrementally
 			if err := logChange(changeLogFile, "user", addedUsers, removedUsers); err != nil {
 				slog.Error("Failed to log user change", "error", err, "component", "system")
 				msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法记录用户变更: %v", err), hostIP, "alert")
-				return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法记录用户变更: %v", err), hostIP, "alert", msg)
+				return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法记录用户变更: %v", err), hostIP, "alert", msg)
 			}
 			// Refresh initialization data
 			if err := saveUsers(userInitialFile, currentUsers); err != nil {
 				slog.Error("Failed to update initial users", "error", err, "component", "system")
 				msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法更新初始用户列表: %v", err), hostIP, "alert")
-				return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法更新初始用户列表: %v", err), hostIP, "alert", msg)
+				return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法更新初始用户列表: %v", err), hostIP, "alert", msg)
 			}
 			details.Reset() // Clear details for next check
 		} else {
@@ -152,14 +152,14 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	if err != nil {
 		slog.Error("Failed to get current processes", "error", err, "component", "system")
 		msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法获取当前进程列表: %v", err), hostIP, "alert")
-		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法获取当前进程列表: %v", err), hostIP, "alert", msg)
+		return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法获取当前进程列表: %v", err), hostIP, "alert", msg)
 	}
 	slog.Debug("Retrieved current processes", "count", len(currentProcesses), "component", "system")
 	initialProcesses, err := loadInitialProcesses(processInitialFile)
 	if err != nil {
 		slog.Error("Failed to load initial processes", "error", err, "component", "system")
 		msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法加载初始进程列表: %v", err), hostIP, "alert")
-		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法加载初始进程列表: %v", err), hostIP, "alert", msg)
+		return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法加载初始进程列表: %v", err), hostIP, "alert", msg)
 	}
 	slog.Debug("Loaded initial processes", "count", len(initialProcesses), "component", "system")
 	if len(initialProcesses) == 0 {
@@ -168,7 +168,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 			slog.Error("Failed to save initial processes", "error", err, "component", "system")
 			msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法保存初始进程列表: %v", err), hostIP, "alert")
-			return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法保存初始进程列表: %v", err), hostIP, "alert", msg)
+			return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法保存初始进程列表: %v", err), hostIP, "alert", msg)
 		}
 	} else {
 		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
@@ -240,20 +240,20 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 			}
 			slog.Info("Detected process changes", "added_processes", len(addedProcs), "removed_processes", len(removedProcs), "component", "system")
 			msg := bot.FormatAlert("系统告警", "进程变更", details.String(), hostIP, "alert")
-			if err := sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", msg); err != nil {
+			if err := sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", msg); err != nil {
 				return err
 			}
 			// Log change incrementally
 			if err := logChange(changeLogFile, "process", addedProcs, removedProcs); err != nil {
 				slog.Error("Failed to log process change", "error", err, "component", "system")
 				msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法记录进程变更: %v", err), hostIP, "alert")
-				return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法记录进程变更: %v", err), hostIP, "alert", msg)
+				return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法记录进程变更: %v", err), hostIP, "alert", msg)
 			}
 			// Refresh initialization data
 			if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 				slog.Error("Failed to update initial processes", "error", err, "component", "system")
 				msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法更新初始进程列表: %v", err), hostIP, "alert")
-				return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法更新初始进程列表: %v", err), hostIP, "alert", msg)
+				return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法更新初始进程列表: %v", err), hostIP, "alert", msg)
 			}
 		} else {
 			slog.Debug("No process changes detected", "added", len(addedProcs), "removed", len(removedProcs), "component", "system")
@@ -265,7 +265,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses, changeLogFile); err != nil {
 			slog.Error("Failed to reinitialize system monitoring", "error", err, "component", "system")
 			msg := bot.FormatAlert("系统告警", "服务异常", fmt.Sprintf("无法重新初始化系统监控: %v", err), hostIP, "alert")
-			return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法重新初始化系统监控: %v", err), hostIP, "alert", msg)
+			return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "服务异常", fmt.Sprintf("无法重新初始化系统监控: %v", err), hostIP, "alert", msg)
 		}
 	}
 
@@ -277,8 +277,8 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	return nil
 }
 
-// sendAlert sends a deduplicated Telegram alert.
-func sendAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, message string) error {
+// sendSystemAlert sends a deduplicated Telegram alert for the System module.
+func sendSystemAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, message string) error {
 	hash, err := util.MD5Hash(details)
 	if err != nil {
 		slog.Error("Failed to generate alert hash", "error", err, "component", "system")
@@ -306,6 +306,62 @@ func sendAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]t
 		return fmt.Errorf("failed to send alert: %w", err)
 	}
 	slog.Info("Sent alert", "message", message, "component", "system")
+	return nil
+}
+
+// logChange appends a change entry to the log file in JSONL format.
+func logChange(file string, changeType string, added, removed any) error {
+	var addedSlice, removedSlice []any
+	switch changeType {
+	case "user":
+		if a, ok := added.([]string); ok {
+			for _, v := range a {
+				addedSlice = append(addedSlice, v)
+			}
+		}
+		if r, ok := removed.([]string); ok {
+			for _, v := range r {
+				removedSlice = append(removedSlice, v)
+			}
+		}
+	case "process":
+		if a, ok := added.([]ProcessInfo); ok {
+			for _, v := range a {
+				addedSlice = append(addedSlice, v)
+			}
+		}
+		if r, ok := removed.([]ProcessInfo); ok {
+			for _, v := range r {
+				removedSlice = append(removedSlice, v)
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported change type: %s", changeType)
+	}
+
+	entry := ChangeLogEntry{
+		Timestamp: time.Now(),
+		Type:      changeType,
+		Added:     addedSlice,
+		Removed:   removedSlice,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		slog.Error("Failed to marshal change entry", "error", err, "component", "system")
+		return fmt.Errorf("failed to marshal change entry: %w", err)
+	}
+	data = append(data, '\n') // JSONL format
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		slog.Error("Failed to open change log file", "file", file, "error", err, "component", "system")
+		return fmt.Errorf("failed to open change log file: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		slog.Error("Failed to write change entry", "file", file, "error", err, "component", "system")
+		return fmt.Errorf("failed to write change entry: %w", err)
+	}
+	slog.Info("Logged change entry", "type", changeType, "added", len(addedSlice), "removed", len(removedSlice), "component", "system")
 	return nil
 }
 
