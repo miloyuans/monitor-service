@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -21,8 +22,8 @@ import (
 	"monitor-service/util"
 )
 
-// Host monitors host resources and returns alerts if thresholds are exceeded.
-func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]string, string, error) {
+// Host monitors host resources and sends alerts if thresholds are exceeded.
+func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration) error {
 	// Get private IP
 	hostIP, err := util.GetPrivateIP()
 	if err != nil {
@@ -38,28 +39,16 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	procs, err := process.ProcessesWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get processes", "error", err, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			fmt.Sprintf("无法获取进程列表: %v", err),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("failed to get processes: %w", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取进程列表: %v", err), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取进程列表: %v", err), hostIP, "alert", msg)
 	}
 
 	// CPU usage
 	cpuPercents, err := cpu.PercentWithContext(ctx, time.Second, false)
 	if err != nil {
 		slog.Error("Failed to get CPU usage", "error", err, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			fmt.Sprintf("无法获取 CPU 使用率: %v", err),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("failed to get CPU usage: %w", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取 CPU 使用率: %v", err), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取 CPU 使用率: %v", err), hostIP, "alert", msg)
 	}
 	var cpuAvg float64
 	for _, p := range cpuPercents {
@@ -88,14 +77,8 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	vm, err := mem.VirtualMemoryWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get memory usage", "error", err, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			fmt.Sprintf("无法获取内存使用率: %v", err),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("failed to get memory usage: %w", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取内存使用率: %v", err), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取内存使用率: %v", err), hostIP, "alert", msg)
 	}
 	remainingPercent := 100.0 - vm.UsedPercent
 	remainingThreshold := 100.0 - cfg.MemThreshold
@@ -118,32 +101,20 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	netIO1, err := net.IOCountersWithContext(ctx, false)
 	if err != nil {
 		slog.Error("Failed to get initial network IO", "error", err, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			fmt.Sprintf("无法获取网络 IO: %v", err),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("failed to get initial network IO: %w", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取网络 IO: %v", err), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取网络 IO: %v", err), hostIP, "alert", msg)
 	}
 	select {
 	case <-time.After(time.Second):
 	case <-ctx.Done():
 		slog.Warn("Network IO measurement cancelled", "component", "host")
-		return nil, hostIP, ctx.Err()
+		return ctx.Err()
 	}
 	netIO2, err := net.IOCountersWithContext(ctx, false)
 	if err != nil {
 		slog.Error("Failed to get final network IO", "error", err, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			fmt.Sprintf("无法获取网络 IO: %v", err),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("failed to get final network IO: %w", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取网络 IO: %v", err), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取网络 IO: %v", err), hostIP, "alert", msg)
 	}
 	var netBytesSent, netBytesRecv float64
 	for i, io1 := range netIO1 {
@@ -170,32 +141,20 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	diskIO1, err := disk.IOCountersWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get initial disk IO", "error", err, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			fmt.Sprintf("无法获取磁盘 IO: %v", err),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("failed to get initial disk IO: %w", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取磁盘 IO: %v", err), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取磁盘 IO: %v", err), hostIP, "alert", msg)
 	}
 	select {
 	case <-time.After(time.Second):
 	case <-ctx.Done():
 		slog.Warn("Disk IO measurement cancelled", "component", "host")
-		return nil, hostIP, ctx.Err()
+		return ctx.Err()
 	}
 	diskIO2, err := disk.IOCountersWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get final disk IO", "error", err, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			fmt.Sprintf("无法获取磁盘 IO: %v", err),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("failed to get final disk IO: %w", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取磁盘 IO: %v", err), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取磁盘 IO: %v", err), hostIP, "alert", msg)
 	}
 	var diskRead, diskWrite float64
 	for name, io1 := range diskIO1 {
@@ -222,14 +181,8 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	du, err := disk.UsageWithContext(ctx, "/")
 	if err != nil {
 		slog.Error("Failed to get disk usage", "path", "/", "error", err, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			fmt.Sprintf("无法获取磁盘使用率: %v", err),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("failed to get disk usage: %w", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取磁盘使用率: %v", err), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取磁盘使用率: %v", err), hostIP, "alert", msg)
 	}
 	diskStatus := "正常✅"
 	diskTopDirsMsg := ""
@@ -247,17 +200,43 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 
 	if hasIssue {
 		slog.Info("Host resource issues detected", "cpu", cpuStatus, "memory", memStatus, "net_io", netIOStatus, "disk_io", diskIOStatus, "disk_io_rate", diskIORate, "disk", diskStatus, "component", "host")
-		msg := bot.FormatAlert(
-			"主机告警",
-			"服务异常",
-			details.String(),
-			hostIP,
-			"alert",
-		)
-		return []string{msg}, hostIP, fmt.Errorf("host resource issues detected")
+		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
+		return sendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
 	}
 	slog.Debug("No host resource issues detected", "component", "host")
-	return nil, hostIP, nil
+	return nil
+}
+
+// sendAlert sends a deduplicated Telegram alert.
+func sendAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, message string) error {
+	hash, err := util.MD5Hash(details)
+	if err != nil {
+		slog.Error("Failed to generate alert hash", "error", err, "component", "host")
+		return fmt.Errorf("failed to generate alert hash: %w", err)
+	}
+	cacheMutex.Lock()
+	now := time.Now()
+	if timestamp, ok := alertCache[hash]; ok && now.Sub(timestamp) < alertSilenceDuration {
+		slog.Info("Skipping duplicate alert", "hash", hash, "component", "host")
+		cacheMutex.Unlock()
+		return nil
+	}
+	alertCache[hash] = now
+	// Clean up old cache entries
+	for h, t := range alertCache {
+		if now.Sub(t) >= alertSilenceDuration {
+			delete(alertCache, h)
+			slog.Debug("Removed expired alert cache entry", "hash", h, "component", "host")
+		}
+	}
+	cacheMutex.Unlock()
+	slog.Debug("Sending alert", "message", message, "component", "host")
+	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType); err != nil {
+		slog.Error("Failed to send alert", "error", err, "component", "host")
+		return fmt.Errorf("failed to send alert: %w", err)
+	}
+	slog.Info("Sent alert", "message", message, "component", "host")
+	return nil
 }
 
 // getTopCPUProcesses gets the top N processes by CPU usage from the provided process list.

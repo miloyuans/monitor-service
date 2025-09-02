@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,12 +15,6 @@ import (
 	"monitor-service/monitor"
 	"monitor-service/util"
 )
-
-// alertKey defines the structure for deduplication cache entries.
-type alertKey struct {
-	hash      string
-	timestamp time.Time
-}
 
 func main() {
 	// Initialize logger with JSON handler
@@ -94,8 +87,8 @@ func main() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Alert deduplication cache
-	alertCache := make(map[string]alertKey)
+	// Alert deduplication cache per module
+	alertCache := make(map[string]map[string]time.Time) // Map of module name to alert hash and timestamp
 	var cacheMutex sync.Mutex // Protect concurrent access to alertCache
 	alertSilenceDuration := time.Duration(cfg.AlertSilenceDuration) * time.Minute
 
@@ -134,71 +127,83 @@ func logMonitoringStatus(cfg config.Config) {
 	}
 }
 
-// monitorAndAlert runs monitoring tasks concurrently and sends deduplicated alerts.
-func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot, alertCache map[string]alertKey, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, checkInterval time.Duration) {
-	var allMessages []string
-	var hostIP string
-	var mu sync.Mutex // Protect allMessages and hostIP
+// monitorAndAlert runs monitoring tasks concurrently.
+func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot, alertCache map[string]map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, checkInterval time.Duration) {
 	var wg sync.WaitGroup
 
 	// Define monitoring tasks
 	monitors := []struct {
-		name        string
-		enabled     bool
-		fn          func(context.Context, interface{}, *alert.AlertBot) ([]string, string, error)
-		cfg         interface{}
-		serviceName string
+		name string
+		enabled bool
+		fn      func(context.Context, interface{}, *alert.AlertBot, map[string]time.Time, *sync.Mutex, time.Duration) error
+		cfg     interface{}
 	}{
 		{
-			name:        "General",
-			enabled:     cfg.Monitoring.Enabled,
-			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.General(ctx, cfg.(config.GeneralConfig), bot) },
-			cfg:         cfg.Monitoring,
-			serviceName: "通用告警",
+			name:    "General",
+			enabled: cfg.Monitoring.Enabled,
+			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.General(ctx, cfg.(config.GeneralConfig), bot, cache, mutex, duration)
+			},
+			cfg:     cfg.Monitoring,
 		},
 		{
-			name:        "RabbitMQ",
-			enabled:     cfg.RabbitMQ.Enabled,
-			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.RabbitMQ(ctx, cfg.(config.RabbitMQConfig), bot) },
-			cfg:         cfg.RabbitMQ,
-			serviceName: "RabbitMQ告警",
+			name:    "RabbitMQ",
+			enabled: cfg.RabbitMQ.Enabled,
+			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.RabbitMQ(ctx, cfg.(config.RabbitMQConfig), bot, cache, mutex, duration)
+			},
+			cfg:     cfg.RabbitMQ,
 		},
 		{
-			name:        "Redis",
-			enabled:     cfg.Redis.Enabled,
-			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Redis(ctx, cfg.(config.RedisConfig), bot) },
-			cfg:         cfg.Redis,
-			serviceName: "Redis告警",
+			name:    "Redis",
+			enabled: cfg.Redis.Enabled,
+			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.Redis(ctx, cfg.(config.RedisConfig), bot, cache, mutex, duration)
+			},
+			cfg:     cfg.Redis,
 		},
 		{
-			name:        "MySQL",
-			enabled:     cfg.MySQL.Enabled,
-			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.MySQL(ctx, cfg.(config.MySQLConfig), bot) },
-			cfg:         cfg.MySQL,
-			serviceName: "数据库告警",
+			name:    "MySQL",
+			enabled: cfg.MySQL.Enabled,
+			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.MySQL(ctx, cfg.(config.MySQLConfig), bot, cache, mutex, duration)
+			},
+			cfg:     cfg.MySQL,
 		},
 		{
-			name:        "Nacos",
-			enabled:     cfg.Nacos.Enabled,
-			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Nacos(ctx, cfg.(config.NacosConfig), bot) },
-			cfg:         cfg.Nacos,
-			serviceName: "Nacos告警",
+			name:    "Nacos",
+			enabled: cfg.Nacos.Enabled,
+			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.Nacos(ctx, cfg.(config.NacosConfig), bot, cache, mutex, duration)
+			},
+			cfg:     cfg.Nacos,
 		},
 		{
-			name:        "Host",
-			enabled:     cfg.HostMonitoring.Enabled,
-			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.Host(ctx, cfg.(config.HostConfig), bot) },
-			cfg:         cfg.HostMonitoring,
-			serviceName: "主机告警",
+			name:    "Host",
+			enabled: cfg.HostMonitoring.Enabled,
+			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.Host(ctx, cfg.(config.HostConfig), bot, cache, mutex, duration)
+			},
+			cfg:     cfg.HostMonitoring,
 		},
 		{
-			name:        "System",
-			enabled:     cfg.SystemMonitoring.Enabled,
-			fn:          func(ctx context.Context, cfg interface{}, bot *alert.AlertBot) ([]string, string, error) { return monitor.System(ctx, cfg.(config.SystemConfig), bot) },
-			cfg:         cfg.SystemMonitoring,
-			serviceName: "系统告警",
+			name:    "System",
+			enabled: cfg.SystemMonitoring.Enabled,
+			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.System(ctx, cfg.(config.SystemConfig), bot, cache, mutex, duration)
+			},
+			cfg:     cfg.SystemMonitoring,
 		},
 	}
+
+	// Initialize per-module alert caches
+	cacheMutex.Lock()
+	for _, m := range monitors {
+		if m.enabled && alertCache[m.name] == nil {
+			alertCache[m.name] = make(map[string]time.Time)
+		}
+	}
+	cacheMutex.Unlock()
 
 	// Run enabled monitoring tasks concurrently
 	for _, m := range monitors {
@@ -208,108 +213,20 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 		}
 
 		wg.Add(1)
-		go func(name, serviceName string, fn func(context.Context, interface{}, *alert.AlertBot) ([]string, string, error), cfg interface{}) {
+		go func(name string, fn func(context.Context, interface{}, *alert.AlertBot, map[string]time.Time, *sync.Mutex, time.Duration) error, cfg interface{}) {
 			defer wg.Done()
 			// Create a task-specific context with timeout
 			taskCtx, taskCancel := context.WithTimeout(ctx, checkInterval)
 			defer taskCancel()
 
-			messages, ip, err := fn(taskCtx, cfg, bot)
-			if err != nil {
+			cacheMutex.Lock()
+			cache := alertCache[name]
+			cacheMutex.Unlock()
+
+			if err := fn(taskCtx, cfg, bot, cache, cacheMutex, alertSilenceDuration); err != nil {
 				slog.Error("Monitoring task failed", "monitor", name, "error", err, "component", "main")
 			}
-			if len(messages) > 0 {
-				mu.Lock()
-				// Update serviceName in alert messages to reflect module-specific name
-				for i, msg := range messages {
-					parts := strings.SplitN(msg, "*服务名*: ", 2)
-					if len(parts) == 2 {
-						lines := strings.SplitN(parts[1], "\n", 2)
-						if len(lines) == 2 {
-							messages[i] = parts[0] + "*服务名*: " + alert.EscapeMarkdown(serviceName) + "\n" + lines[1]
-						}
-					}
-				}
-				allMessages = append(allMessages, messages...)
-				if ip != "" {
-					hostIP = ip // Use the last non-empty IP
-				}
-				mu.Unlock()
-			}
-		}(m.name, m.serviceName, m.fn, m.cfg)
+		}(m.name, m.fn, m.cfg)
 	}
 	wg.Wait()
-
-	// Combine and deduplicate alerts
-	if len(allMessages) > 0 {
-		var details strings.Builder
-		for i, msg := range allMessages {
-			// Extract details by splitting on "*详情*:\n"
-			parts := strings.SplitN(msg, "*详情*:\n", 2)
-			if len(parts) != 2 {
-				slog.Warn("Invalid alert format, skipping", "message", msg, "component", "main")
-				continue
-			}
-			// Extract serviceName and eventName
-			serviceName := ""
-			eventName := ""
-			for _, line := range strings.Split(parts[0], "\n") {
-				if strings.HasPrefix(line, "*服务名*: ") {
-					serviceName = strings.TrimPrefix(line, "*服务名*: ")
-				}
-				if strings.HasPrefix(line, "*事件名*: ") {
-					eventName = strings.TrimPrefix(line, "*事件名*: ")
-				}
-			}
-			if serviceName == "" || eventName == "" {
-				slog.Warn("Missing serviceName or eventName, skipping", "message", msg, "component", "main")
-				continue
-			}
-			if i > 0 {
-				details.WriteString("\n\n")
-			}
-			fmt.Fprintf(&details, "**%s - %s**:\n%s", alert.EscapeMarkdown(serviceName), alert.EscapeMarkdown(eventName), alert.EscapeMarkdown(parts[1]))
-		}
-
-		if details.Len() == 0 {
-			slog.Info("No valid alert details to send", "component", "main")
-			return
-		}
-
-		// Deduplicate combined alert
-		hash, err := util.MD5Hash(details.String())
-		if err != nil {
-			slog.Error("Failed to generate alert hash", "error", err, "component", "main")
-			return
-		}
-		cacheMutex.Lock()
-		now := time.Now()
-		if cache, ok := alertCache[hash]; ok && now.Sub(cache.timestamp) < alertSilenceDuration {
-			slog.Info("Skipping duplicate alert", "hash", hash, "component", "main")
-			cacheMutex.Unlock()
-			return
-		}
-
-		// Format and send combined alert
-		serviceName := fmt.Sprintf("Monitor Service %s", cfg.ClusterName)
-		combinedMsg := bot.FormatAlert(serviceName, "服务异常", details.String(), hostIP, "alert")
-		slog.Debug("Sending combined alert", "message", combinedMsg, "component", "main")
-		if err := bot.SendAlert(ctx, serviceName, "服务异常", details.String(), hostIP, "alert"); err != nil {
-			slog.Error("Failed to send combined alert", "error", err, "component", "main")
-		} else {
-			slog.Info("Sent combined alert", "message", combinedMsg, "component", "main")
-			alertCache[hash] = alertKey{hash: hash, timestamp: now}
-		}
-
-		// Clean up old cache entries
-		for h, cache := range alertCache {
-			if now.Sub(cache.timestamp) >= alertSilenceDuration {
-				delete(alertCache, h)
-				slog.Debug("Removed expired alert cache entry", "hash", h, "component", "main")
-			}
-		}
-		cacheMutex.Unlock()
-	} else {
-		slog.Debug("No alerts generated", "component", "main")
-	}
 }
