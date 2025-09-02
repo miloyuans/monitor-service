@@ -205,10 +205,10 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 					alert.EscapeMarkdown("-----"),
 				)
 				for _, p := range addedProcs {
-					fmt.Fprintf(&details, "| %s | %d | %d | %s | %s | %s | %s |\n",
+					fmt.Fprintf(&details, "| %s | %s | %s | %s | %s | %s | %s |\n",
 						alert.EscapeMarkdown(p.User),
-						p.PID,
-						p.PPID,
+						alert.EscapeMarkdown(fmt.Sprintf("%d", p.PID)),
+						alert.EscapeMarkdown(fmt.Sprintf("%d", p.PPID)),
 						alert.EscapeMarkdown(p.STIME),
 						alert.EscapeMarkdown(p.TTY),
 						alert.EscapeMarkdown(p.TIME),
@@ -237,10 +237,10 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 					alert.EscapeMarkdown("-----"),
 				)
 				for _, p := range removedProcs {
-					fmt.Fprintf(&details, "| %s | %d | %d | %s | %s | %s | %s |\n",
+					fmt.Fprintf(&details, "| %s | %s | %s | %s | %s | %s | %s |\n",
 						alert.EscapeMarkdown(p.User),
-						p.PID,
-						p.PPID,
+						alert.EscapeMarkdown(fmt.Sprintf("%d", p.PID)),
+						alert.EscapeMarkdown(fmt.Sprintf("%d", p.PPID)),
 						alert.EscapeMarkdown(p.STIME),
 						alert.EscapeMarkdown(p.TTY),
 						alert.EscapeMarkdown(p.TIME),
