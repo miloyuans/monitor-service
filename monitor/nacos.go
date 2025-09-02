@@ -7,8 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
-	"sync"
 	"time"
 
 	"monitor-service/alert"
@@ -81,8 +79,8 @@ func Nacos(ctx context.Context, cfg config.NacosConfig, bot *alert.AlertBot, ale
 		}
 	}
 
-	// Check configuration service availability (using a test configuration)
-	configURL := fmt.Sprintf("%s/nacos/v1/cs/configs?dataId=example&group=DEFAULT_GROUP", cfg.Address)
+	// Check configuration service availability
+	configURL := fmt.Sprintf("%s/nacos/v1/cs/configs?dataId=%s&group=%s", cfg.Address, cfg.NacosDataID, cfg.NacosGroup)
 	req, err = http.NewRequestWithContext(ctx, http.MethodGet, configURL, nil)
 	if err != nil {
 		slog.Error("Failed to create Nacos config request", "url", configURL, "error", err, "component", "nacos")

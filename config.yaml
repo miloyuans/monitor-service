@@ -31,6 +31,8 @@ nacos:
   enabled: false
   address: "http://localhost:8848"
   cluster_name: "nacos-cluster"
+  nacos_data_id: "example"
+  nacos_group: "DEFAULT_GROUP"
 host_monitoring:
   enabled: false
   cpu_threshold: 80.0

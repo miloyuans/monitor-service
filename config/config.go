@@ -41,7 +41,7 @@ type RabbitMQConfig struct {
 	URL         string `mapstructure:"url"`
 	Username    string `mapstructure:"username"`
 	Password    string `mapstructure:"password"`
-	Address     string `mapstructure:"address"` // Management API URL (e.g., http://localhost:15672)
+	Address     string `mapstructure:"address"` // Management API URL
 	ClusterName string `mapstructure:"cluster_name"`
 }
 
@@ -68,6 +68,8 @@ type NacosConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`
 	Address     string `mapstructure:"address"`
 	ClusterName string `mapstructure:"cluster_name"`
+	NacosDataID  string `mapstructure:"nacos_data_id"`  // Data ID for config check
+	NacosGroup   string `mapstructure:"nacos_group"`    // Group for config check
 }
 
 // HostConfig holds host monitoring configuration.
@@ -110,6 +112,8 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("nacos.enabled", false)
 	viper.SetDefault("nacos.address", "http://localhost:8848")
 	viper.SetDefault("nacos.cluster_name", "nacos-cluster")
+	viper.SetDefault("nacos.nacos_data_id", "example")
+	viper.SetDefault("nacos.nacos_group", "DEFAULT_GROUP")
 	viper.SetDefault("host_monitoring.enabled", false)
 	viper.SetDefault("host_monitoring.cpu_threshold", 80.0)
 	viper.SetDefault("host_monitoring.mem_threshold", 80.0)
@@ -232,6 +236,12 @@ func (c Config) Validate() error {
 		if c.Nacos.ClusterName == "" {
 			return fmt.Errorf("nacos.cluster_name is required when nacos.enabled is true")
 		}
+		if c.Nacos.NacosDataID == "" {
+			return fmt.Errorf("nacos.nacos_data_id is required when nacos.enabled is true")
+		}
+		if c.Nacos.NacosGroup == "" {
+			return fmt.Errorf("nacos.nacos_group is required when nacos.enabled is true")
+		}
 	}
 
 	// Validate Host monitoring configuration
@@ -253,7 +263,7 @@ func (c Config) Validate() error {
 		}
 	}
 
-	// System monitoring validation (no additional fields currently)
+	// System monitoring validation
 	if c.SystemMonitoring.Enabled {
 		// No specific validation required yet
 	}
