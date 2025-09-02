@@ -268,7 +268,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, bot *alert.AlertBot
 			if i > 0 {
 				details.WriteString("\n\n")
 			}
-			fmt.Fprintf(&details, "**%s - %s**:\n%s", alert.EscapeMarkdown(serviceName), alert.EscapeMarkdown(eventName), parts[1])
+			fmt.Fprintf(&details, "**%s - %s**:\n%s", alert.EscapeMarkdown(serviceName), alert.EscapeMarkdown(eventName), alert.EscapeMarkdown(parts[1]))
 		}
 
 		if details.Len() == 0 {

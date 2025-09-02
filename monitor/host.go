@@ -39,7 +39,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	if err != nil {
 		slog.Error("Failed to get processes", "error", err, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			fmt.Sprintf("无法获取进程列表: %v", err),
 			hostIP,
@@ -53,7 +53,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	if err != nil {
 		slog.Error("Failed to get CPU usage", "error", err, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			fmt.Sprintf("无法获取 CPU 使用率: %v", err),
 			hostIP,
@@ -79,7 +79,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 			slog.Warn("Failed to get top CPU processes", "error", err, "component", "host")
 		}
 	}
-	fmt.Fprintf(&details, "**CPU 使用率**: %s\n", cpuStatus)
+	fmt.Fprintf(&details, "**CPU 使用率**: %s\n", alert.EscapeMarkdown(cpuStatus))
 	if cpuTopProcsMsg != "" {
 		details.WriteString(cpuTopProcsMsg)
 	}
@@ -89,7 +89,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	if err != nil {
 		slog.Error("Failed to get memory usage", "error", err, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			fmt.Sprintf("无法获取内存使用率: %v", err),
 			hostIP,
@@ -108,7 +108,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 			slog.Warn("Failed to get top memory processes", "error", err, "component", "host")
 		}
 	}
-	fmt.Fprintf(&details, "**内存剩余率**: %s\n", memStatus)
+	fmt.Fprintf(&details, "**内存剩余率**: %s\n", alert.EscapeMarkdown(memStatus))
 	if memTopProcsMsg != "" {
 		details.WriteString(memTopProcsMsg)
 	}
@@ -119,7 +119,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	if err != nil {
 		slog.Error("Failed to get initial network IO", "error", err, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			fmt.Sprintf("无法获取网络 IO: %v", err),
 			hostIP,
@@ -137,7 +137,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	if err != nil {
 		slog.Error("Failed to get final network IO", "error", err, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			fmt.Sprintf("无法获取网络 IO: %v", err),
 			hostIP,
@@ -164,14 +164,14 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 		netIOStatus = fmt.Sprintf("异常❌ %.4f GB/s > %.4f GB/s", netIORate, cfg.NetIOThreshold)
 		hasIssue = true
 	}
-	fmt.Fprintf(&details, "**网络 IO 使用率**: %s\n", netIOStatus)
+	fmt.Fprintf(&details, "**网络 IO 使用率**: %s\n", alert.EscapeMarkdown(netIOStatus))
 
 	// Disk IO rate (in GB/s)
 	diskIO1, err := disk.IOCountersWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get initial disk IO", "error", err, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			fmt.Sprintf("无法获取磁盘 IO: %v", err),
 			hostIP,
@@ -189,7 +189,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	if err != nil {
 		slog.Error("Failed to get final disk IO", "error", err, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			fmt.Sprintf("无法获取磁盘 IO: %v", err),
 			hostIP,
@@ -216,14 +216,14 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 		diskIOStatus = fmt.Sprintf("异常❌ %.4f GB/s > %.4f GB/s", diskIORate, cfg.DiskIOThreshold)
 		hasIssue = true
 	}
-	fmt.Fprintf(&details, "**磁盘 IO 使用率**: %s\n", diskIOStatus)
+	fmt.Fprintf(&details, "**磁盘 IO 使用率**: %s\n", alert.EscapeMarkdown(diskIOStatus))
 
 	// Disk usage (root)
 	du, err := disk.UsageWithContext(ctx, "/")
 	if err != nil {
 		slog.Error("Failed to get disk usage", "path", "/", "error", err, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			fmt.Sprintf("无法获取磁盘使用率: %v", err),
 			hostIP,
@@ -240,7 +240,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 			slog.Warn("Failed to get top disk directories", "error", err, "component", "host")
 		}
 	}
-	fmt.Fprintf(&details, "**磁盘使用率**: %s\n", diskStatus)
+	fmt.Fprintf(&details, "**磁盘使用率**: %s\n", alert.EscapeMarkdown(diskStatus))
 	if diskTopDirsMsg != "" {
 		details.WriteString(diskTopDirsMsg)
 	}
@@ -248,7 +248,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot) ([]st
 	if hasIssue {
 		slog.Info("Host resource issues detected", "cpu", cpuStatus, "memory", memStatus, "net_io", netIOStatus, "disk_io", diskIOStatus, "disk_io_rate", diskIORate, "disk", diskStatus, "component", "host")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("Host (%s)", bot.ClusterName),
+			"主机告警",
 			"服务异常",
 			details.String(),
 			hostIP,
@@ -303,7 +303,23 @@ func getTopCPUProcesses(ctx context.Context, procs []*process.Process, n int) (s
 	}
 	sort.Slice(top, func(i, j int) bool { return top[i].cpu > top[j].cpu })
 	var msg strings.Builder
-	msg.WriteString("\n**最消耗 CPU 的 3 个进程**:\n| User | PID | Name | CPU% | Start Time | TTY |\n|\\------|\\-----|\\------|\\------|\\------------|\\-----|\n")
+	msg.WriteString("\n**最消耗 CPU 的 3 个进程**:\n")
+	fmt.Fprintf(&msg, "| %s | %s | %s | %s | %s | %s |\n",
+		alert.EscapeMarkdown("User"),
+		alert.EscapeMarkdown("PID"),
+		alert.EscapeMarkdown("Name"),
+		alert.EscapeMarkdown("CPU%"),
+		alert.EscapeMarkdown("Start Time"),
+		alert.EscapeMarkdown("TTY"),
+	)
+	fmt.Fprintf(&msg, "|%s|%s|%s|%s|%s|%s|\n",
+		alert.EscapeMarkdown("------"),
+		alert.EscapeMarkdown("-----"),
+		alert.EscapeMarkdown("------"),
+		alert.EscapeMarkdown("------"),
+		alert.EscapeMarkdown("------------"),
+		alert.EscapeMarkdown("-----"),
+	)
 	for i := 0; i < n && i < len(top); i++ {
 		fmt.Fprintf(&msg, "| %s | %d | %s | %.2f | %s | %s |\n",
 			alert.EscapeMarkdown(top[i].user),
@@ -361,7 +377,23 @@ func getTopMemoryProcesses(ctx context.Context, procs []*process.Process, n int)
 	sort.Slice(top, func(i, j int) bool { return top[i].mem > top[j].mem })
 	const bytesToMB = 1.0 / (1024 * 1024) // Convert bytes to MB
 	var msg strings.Builder
-	msg.WriteString("\n**最消耗内存的 3 个进程**:\n| User | PID | Name | Memory (MB) | Start Time | TTY |\n|\\------|\\-----|\\------|\\-------------|\\------------|\\-----|\n")
+	msg.WriteString("\n**最消耗内存的 3 个进程**:\n")
+	fmt.Fprintf(&msg, "| %s | %s | %s | %s | %s | %s |\n",
+		alert.EscapeMarkdown("User"),
+		alert.EscapeMarkdown("PID"),
+		alert.EscapeMarkdown("Name"),
+		alert.EscapeMarkdown("Memory (MB)"),
+		alert.EscapeMarkdown("Start Time"),
+		alert.EscapeMarkdown("TTY"),
+	)
+	fmt.Fprintf(&msg, "|%s|%s|%s|%s|%s|%s|\n",
+		alert.EscapeMarkdown("------"),
+		alert.EscapeMarkdown("-----"),
+		alert.EscapeMarkdown("------"),
+		alert.EscapeMarkdown("-------------"),
+		alert.EscapeMarkdown("------------"),
+		alert.EscapeMarkdown("-----"),
+	)
 	for i := 0; i < n && i < len(top); i++ {
 		memMB := float64(top[i].mem) * bytesToMB
 		fmt.Fprintf(&msg, "| %s | %d | %s | %.2f | %s | %s |\n",
@@ -418,7 +450,15 @@ func getTopDiskDirectories(ctx context.Context, n int) (string, error) {
 	}
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].size > dirs[j].size })
 	var msg strings.Builder
-	msg.WriteString("\n**最占用磁盘空间的 3 个目录**:\n| Size | Path |\n|\\------|\\------|\n")
+	msg.WriteString("\n**最占用磁盘空间的 3 个目录**:\n")
+	fmt.Fprintf(&msg, "| %s | %s |\n",
+		alert.EscapeMarkdown("Size"),
+		alert.EscapeMarkdown("Path"),
+	)
+	fmt.Fprintf(&msg, "|%s|%s|\n",
+		alert.EscapeMarkdown("------"),
+		alert.EscapeMarkdown("------"),
+	)
 	for i := 0; i < n && i < len(dirs); i++ {
 		fmt.Fprintf(&msg, "| %s | %s |\n", alert.EscapeMarkdown(dirs[i].sizeStr), alert.EscapeMarkdown(dirs[i].path))
 	}

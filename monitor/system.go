@@ -72,7 +72,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
 			slog.Error("Failed to cleanup historical files", "error", err, "component", "system")
 			msg := bot.FormatAlert(
-				fmt.Sprintf("System (%s)", bot.ClusterName),
+				"系统告警",
 				"服务异常",
 				fmt.Sprintf("无法清理历史文件: %v", err),
 				hostIP,
@@ -83,7 +83,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 		if err := updateLastCleanup(lastCleanupFile); err != nil {
 			slog.Error("Failed to update last cleanup time", "error", err, "component", "system")
 			msg := bot.FormatAlert(
-				fmt.Sprintf("System (%s)", bot.ClusterName),
+				"系统告警",
 				"服务异常",
 				fmt.Sprintf("无法更新最后清理时间: %v", err),
 				hostIP,
@@ -108,7 +108,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 	if err != nil {
 		slog.Error("Failed to get current users", "error", err, "component", "system")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("System (%s)", bot.ClusterName),
+			"系统告警",
 			"服务异常",
 			fmt.Sprintf("无法获取当前用户列表: %v", err),
 			hostIP,
@@ -121,7 +121,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 	if err != nil {
 		slog.Error("Failed to load initial users", "error", err, "component", "system")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("System (%s)", bot.ClusterName),
+			"系统告警",
 			"服务异常",
 			fmt.Sprintf("无法加载初始用户列表: %v", err),
 			hostIP,
@@ -136,7 +136,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
 			slog.Error("Failed to save initial users", "error", err, "component", "system")
 			msg := bot.FormatAlert(
-				fmt.Sprintf("System (%s)", bot.ClusterName),
+				"系统告警",
 				"服务异常",
 				fmt.Sprintf("无法保存初始用户列表: %v", err),
 				hostIP,
@@ -156,7 +156,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 			}
 			slog.Info("Detected user changes", "added_users", addedUsers, "removed_users", removedUsers, "component", "system")
 			msg := bot.FormatAlert(
-				fmt.Sprintf("System (%s)", bot.ClusterName),
+				"系统告警",
 				"用户变更",
 				details.String(),
 				hostIP,
@@ -167,7 +167,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 			if err := logChange(changeLogFile, "user", addedUsers, removedUsers); err != nil {
 				slog.Error("Failed to log user change", "error", err, "component", "system")
 				msg := bot.FormatAlert(
-					fmt.Sprintf("System (%s)", bot.ClusterName),
+					"系统告警",
 					"服务异常",
 					fmt.Sprintf("无法记录用户变更: %v", err),
 					hostIP,
@@ -179,7 +179,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 			if err := saveUsers(userInitialFile, currentUsers); err != nil {
 				slog.Error("Failed to update initial users", "error", err, "component", "system")
 				msg := bot.FormatAlert(
-					fmt.Sprintf("System (%s)", bot.ClusterName),
+					"系统告警",
 					"服务异常",
 					fmt.Sprintf("无法更新初始用户列表: %v", err),
 					hostIP,
@@ -198,7 +198,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 	if err != nil {
 		slog.Error("Failed to get current processes", "error", err, "component", "system")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("System (%s)", bot.ClusterName),
+			"系统告警",
 			"服务异常",
 			fmt.Sprintf("无法获取当前进程列表: %v", err),
 			hostIP,
@@ -211,7 +211,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 	if err != nil {
 		slog.Error("Failed to load initial processes", "error", err, "component", "system")
 		msg := bot.FormatAlert(
-			fmt.Sprintf("System (%s)", bot.ClusterName),
+			"系统告警",
 			"服务异常",
 			fmt.Sprintf("无法加载初始进程列表: %v", err),
 			hostIP,
@@ -226,7 +226,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 			slog.Error("Failed to save initial processes", "error", err, "component", "system")
 			msg := bot.FormatAlert(
-				fmt.Sprintf("System (%s)", bot.ClusterName),
+				"系统告警",
 				"服务异常",
 				fmt.Sprintf("无法保存初始进程列表: %v", err),
 				hostIP,
@@ -239,7 +239,25 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 		if len(addedProcs) > 0 || len(removedProcs) > 0 {
 			hasIssue = true
 			if len(addedProcs) > 0 {
-				details.WriteString("**增加的进程**:\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|\\-----|\\-----|\\------|\\-------|\\-----|\\------|\\-----|\n")
+				details.WriteString("**增加的进程**:\n")
+				fmt.Fprintf(&details, "| %s | %s | %s | %s | %s | %s | %s |\n",
+					alert.EscapeMarkdown("UID"),
+					alert.EscapeMarkdown("PID"),
+					alert.EscapeMarkdown("PPID"),
+					alert.EscapeMarkdown("STIME"),
+					alert.EscapeMarkdown("TTY"),
+					alert.EscapeMarkdown("TIME"),
+					alert.EscapeMarkdown("CMD"),
+				)
+				fmt.Fprintf(&details, "|%s|%s|%s|%s|%s|%s|%s|\n",
+					alert.EscapeMarkdown("-----"),
+					alert.EscapeMarkdown("-----"),
+					alert.EscapeMarkdown("------"),
+					alert.EscapeMarkdown("-------"),
+					alert.EscapeMarkdown("-----"),
+					alert.EscapeMarkdown("------"),
+					alert.EscapeMarkdown("-----"),
+				)
 				for _, p := range addedProcs {
 					fmt.Fprintf(&details, "| %s | %d | %d | %s | %s | %s | %s |\n",
 						alert.EscapeMarkdown(p.User),
@@ -253,7 +271,25 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 				}
 			}
 			if len(removedProcs) > 0 {
-				details.WriteString("**减少的进程**:\n| UID | PID | PPID | STIME | TTY | TIME | CMD |\n|\\-----|\\-----|\\------|\\-------|\\-----|\\------|\\-----|\n")
+				details.WriteString("**减少的进程**:\n")
+				fmt.Fprintf(&details, "| %s | %s | %s | %s | %s | %s | %s |\n",
+					alert.EscapeMarkdown("UID"),
+					alert.EscapeMarkdown("PID"),
+					alert.EscapeMarkdown("PPID"),
+					alert.EscapeMarkdown("STIME"),
+					alert.EscapeMarkdown("TTY"),
+					alert.EscapeMarkdown("TIME"),
+					alert.EscapeMarkdown("CMD"),
+				)
+				fmt.Fprintf(&details, "|%s|%s|%s|%s|%s|%s|%s|\n",
+					alert.EscapeMarkdown("-----"),
+					alert.EscapeMarkdown("-----"),
+					alert.EscapeMarkdown("------"),
+					alert.EscapeMarkdown("-------"),
+					alert.EscapeMarkdown("-----"),
+					alert.EscapeMarkdown("------"),
+					alert.EscapeMarkdown("-----"),
+				)
 				for _, p := range removedProcs {
 					fmt.Fprintf(&details, "| %s | %d | %d | %s | %s | %s | %s |\n",
 						alert.EscapeMarkdown(p.User),
@@ -268,7 +304,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 			}
 			slog.Info("Detected process changes", "added_processes", len(addedProcs), "removed_processes", len(removedProcs), "component", "system")
 			msg := bot.FormatAlert(
-				fmt.Sprintf("System (%s)", bot.ClusterName),
+				"系统告警",
 				"进程变更",
 				details.String(),
 				hostIP,
@@ -279,7 +315,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 			if err := logChange(changeLogFile, "process", addedProcs, removedProcs); err != nil {
 				slog.Error("Failed to log process change", "error", err, "component", "system")
 				msg := bot.FormatAlert(
-					fmt.Sprintf("System (%s)", bot.ClusterName),
+					"系统告警",
 					"服务异常",
 					fmt.Sprintf("无法记录进程变更: %v", err),
 					hostIP,
@@ -291,7 +327,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 			if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 				slog.Error("Failed to update initial processes", "error", err, "component", "system")
 				msg := bot.FormatAlert(
-					fmt.Sprintf("System (%s)", bot.ClusterName),
+					"系统告警",
 					"服务异常",
 					fmt.Sprintf("无法更新初始进程列表: %v", err),
 					hostIP,
@@ -309,7 +345,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot) (
 		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses, changeLogFile); err != nil {
 			slog.Error("Failed to reinitialize system monitoring", "error", err, "component", "system")
 			msg := bot.FormatAlert(
-				fmt.Sprintf("System (%s)", bot.ClusterName),
+				"系统告警",
 				"服务异常",
 				fmt.Sprintf("无法重新初始化系统监控: %v", err),
 				hostIP,
