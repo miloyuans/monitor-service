@@ -39,16 +39,18 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	procs, err := process.ProcessesWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get processes", "error", err, "component", "host")
-		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取进程列表: %v", err), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取进程列表: %v", err), hostIP, "alert", msg)
+		details := fmt.Sprintf("无法获取进程列表: %v", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", details, hostIP, "alert")
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details, hostIP, "alert", msg)
 	}
 
 	// CPU usage
 	cpuPercents, err := cpu.PercentWithContext(ctx, time.Second, false)
 	if err != nil {
 		slog.Error("Failed to get CPU usage", "error", err, "component", "host")
-		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取 CPU 使用率: %v", err), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取 CPU 使用率: %v", err), hostIP, "alert", msg)
+		details := fmt.Sprintf("无法获取 CPU 使用率: %v", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", details, hostIP, "alert")
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details, hostIP, "alert", msg)
 	}
 	var cpuAvg float64
 	for _, p := range cpuPercents {
@@ -77,8 +79,9 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	vm, err := mem.VirtualMemoryWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get memory usage", "error", err, "component", "host")
-		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取内存使用率: %v", err), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取内存使用率: %v", err), hostIP, "alert", msg)
+		details := fmt.Sprintf("无法获取内存使用率: %v", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", details, hostIP, "alert")
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details, hostIP, "alert", msg)
 	}
 	remainingPercent := 100.0 - vm.UsedPercent
 	remainingThreshold := 100.0 - cfg.MemThreshold
@@ -101,8 +104,9 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	netIO1, err := net.IOCountersWithContext(ctx, false)
 	if err != nil {
 		slog.Error("Failed to get initial network IO", "error", err, "component", "host")
-		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取网络 IO: %v", err), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取网络 IO: %v", err), hostIP, "alert", msg)
+		details := fmt.Sprintf("无法获取网络 IO: %v", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", details, hostIP, "alert")
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details, hostIP, "alert", msg)
 	}
 	select {
 	case <-time.After(time.Second):
@@ -113,8 +117,9 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	netIO2, err := net.IOCountersWithContext(ctx, false)
 	if err != nil {
 		slog.Error("Failed to get final network IO", "error", err, "component", "host")
-		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取网络 IO: %v", err), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取网络 IO: %v", err), hostIP, "alert", msg)
+		details := fmt.Sprintf("无法获取网络 IO: %v", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", details, hostIP, "alert")
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details, hostIP, "alert", msg)
 	}
 	var netBytesSent, netBytesRecv float64
 	for i, io1 := range netIO1 {
@@ -141,8 +146,9 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	diskIO1, err := disk.IOCountersWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get initial disk IO", "error", err, "component", "host")
-		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取磁盘 IO: %v", err), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取磁盘 IO: %v", err), hostIP, "alert", msg)
+		details := fmt.Sprintf("无法获取磁盘 IO: %v", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", details, hostIP, "alert")
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details, hostIP, "alert", msg)
 	}
 	select {
 	case <-time.After(time.Second):
@@ -153,8 +159,9 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	diskIO2, err := disk.IOCountersWithContext(ctx)
 	if err != nil {
 		slog.Error("Failed to get final disk IO", "error", err, "component", "host")
-		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取磁盘 IO: %v", err), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取磁盘 IO: %v", err), hostIP, "alert", msg)
+		details := fmt.Sprintf("无法获取磁盘 IO: %v", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", details, hostIP, "alert")
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details, hostIP, "alert", msg)
 	}
 	var diskRead, diskWrite float64
 	for name, io1 := range diskIO1 {
@@ -181,8 +188,9 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	du, err := disk.UsageWithContext(ctx, "/")
 	if err != nil {
 		slog.Error("Failed to get disk usage", "path", "/", "error", err, "component", "host")
-		msg := bot.FormatAlert("主机告警", "服务异常", fmt.Sprintf("无法获取磁盘使用率: %v", err), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", fmt.Sprintf("无法获取磁盘使用率: %v", err), hostIP, "alert", msg)
+		details := fmt.Sprintf("无法获取磁盘使用率: %v", err)
+		msg := bot.FormatAlert("主机告警", "服务异常", details, hostIP, "alert")
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details, hostIP, "alert", msg)
 	}
 	diskStatus := "正常✅"
 	diskTopDirsMsg := ""
@@ -230,12 +238,12 @@ func sendHostAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[stri
 		}
 	}
 	cacheMutex.Unlock()
-	slog.Debug("Sending alert", "message", message, "component", "host")
+	slog.Debug("Sending alert", "message", message, "details", details, "component", "host")
 	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType); err != nil {
-		slog.Error("Failed to send alert", "error", err, "component", "host")
+		slog.Error("Failed to send alert", "error", err, "message", message, "details", details, "component", "host")
 		return fmt.Errorf("failed to send alert: %w", err)
 	}
-	slog.Info("Sent alert", "message", message, "component", "host")
+	slog.Info("Sent alert", "message", message, "details", details, "component", "host")
 	return nil
 }
 
@@ -300,11 +308,11 @@ func getTopCPUProcesses(ctx context.Context, procs []*process.Process, n int) (s
 		alert.EscapeMarkdown("-----"),
 	)
 	for i := 0; i < n && i < len(top); i++ {
-		fmt.Fprintf(&msg, "| %s | %d | %s | %.2f | %s | %s |\n",
+		fmt.Fprintf(&msg, "| %s | %d | %s | %s | %s | %s |\n",
 			alert.EscapeMarkdown(top[i].user),
 			top[i].pid,
 			alert.EscapeMarkdown(top[i].name),
-			top[i].cpu,
+			alert.EscapeMarkdown(fmt.Sprintf("%.2f", top[i].cpu)),
 			alert.EscapeMarkdown(top[i].stime),
 			alert.EscapeMarkdown(top[i].tty),
 		)
@@ -375,11 +383,11 @@ func getTopMemoryProcesses(ctx context.Context, procs []*process.Process, n int)
 	)
 	for i := 0; i < n && i < len(top); i++ {
 		memMB := float64(top[i].mem) * bytesToMB
-		fmt.Fprintf(&msg, "| %s | %d | %s | %.2f | %s | %s |\n",
+		fmt.Fprintf(&msg, "| %s | %d | %s | %s | %s | %s |\n",
 			alert.EscapeMarkdown(top[i].user),
 			top[i].pid,
 			alert.EscapeMarkdown(top[i].name),
-			memMB,
+			alert.EscapeMarkdown(fmt.Sprintf("%.2f", memMB)),
 			alert.EscapeMarkdown(top[i].stime),
 			alert.EscapeMarkdown(top[i].tty),
 		)
