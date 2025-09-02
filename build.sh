@@ -12,7 +12,7 @@ fi
 
 PACKAGE_TYPE="$1"
 REPO_URL="$2"
-VERSION="1.0.0"
+VERSION="$3"
 
 # Detect system architecture
 ARCH=$(uname -m)
@@ -59,7 +59,7 @@ fi
 chmod +x systemd-sml
 
 # Download config.yaml and systemd-sml.service from Raw
-wget "${RAW_BASE}/config.yaml"
+wget "${RAW_BASE}/config-default.yaml" -O config.yaml
 if [ $? -ne 0 ]; then
   echo "Error: Failed to download config.yaml"
   exit 1

@@ -6,7 +6,10 @@
 #   chat_id: 123456789
 # rabbitmq:
 #   enabled: false
-#   url: "amqp://guest:guest@localhost:5672/"
+#   url: "http://localhost:15672"
+#   address: "http://localhost:15672" # Added for management API
+#   username: "guest"
+#   password: "guest"
 #   cluster_name: "rabbitmq-cluster"
 # redis:
 #   enabled: false
