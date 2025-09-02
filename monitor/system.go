@@ -723,7 +723,7 @@ func reinitializeSystemMonitoring(userInitialFile, processInitialFile string, cu
 			continue
 		}
 		if err := os.Remove(file); err != nil {
-			slog.Error("Failed to remove old file", "file", file, "error", err, "component", "system")
+			slog.Error("Failed to remove old file", "file", sellable, "error", err, "component", "system")
 			continue
 		}
 		slog.Info("Archived and removed file", "file", file, "archive", archiveFile, "component", "system")
