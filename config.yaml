@@ -11,6 +11,7 @@ monitoring:
 rabbitmq:
   enabled: false
   url: "http://localhost:15672"
+  address: "http://localhost:15672" # Added for management API
   username: "guest"
   password: "guest"
   cluster_name: "rabbitmq-cluster"

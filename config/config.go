@@ -41,6 +41,7 @@ type RabbitMQConfig struct {
 	URL         string `mapstructure:"url"`
 	Username    string `mapstructure:"username"`
 	Password    string `mapstructure:"password"`
+	Address     string `mapstructure:"address"` // Management API URL (e.g., http://localhost:15672)
 	ClusterName string `mapstructure:"cluster_name"`
 }
 
@@ -91,9 +92,10 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("telegram.bot_token", "")
 	viper.SetDefault("telegram.chat_id", 0)
 	viper.SetDefault("rabbitmq.enabled", false)
-	viper.SetDefault("rabbitmq.url", "http://localhost:15672")
+	viper.SetDefault("rabbitmq.url", "amqp://guest:guest@localhost:5672/")
 	viper.SetDefault("rabbitmq.username", "guest")
 	viper.SetDefault("rabbitmq.password", "guest")
+	viper.SetDefault("rabbitmq.address", "http://localhost:15672")
 	viper.SetDefault("rabbitmq.cluster_name", "rabbitmq-cluster")
 	viper.SetDefault("redis.enabled", false)
 	viper.SetDefault("redis.addr", "localhost:6379")
@@ -184,6 +186,9 @@ func (c Config) Validate() error {
 		}
 		if c.RabbitMQ.Password == "" {
 			return fmt.Errorf("rabbitmq.password is required when rabbitmq.enabled is true")
+		}
+		if c.RabbitMQ.Address == "" {
+			return fmt.Errorf("rabbitmq.address is required when rabbitmq.enabled is true")
 		}
 		if c.RabbitMQ.ClusterName == "" {
 			return fmt.Errorf("rabbitmq.cluster_name is required when rabbitmq.enabled is true")
