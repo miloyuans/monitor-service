@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +52,8 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 			values := make([]interface{}, len(columns))
 			valuePtrs := make([]interface{}, len(columns))
 			for i := range values {
-				valuePtrs[i] = &values[i]
+				var v sql.RawBytes
+				valuePtrs[i] = &v
 			}
 			if err := rows.Scan(valuePtrs...); err != nil {
 				slog.Warn("Failed to scan slave status", "error", err, "component", "mysql")

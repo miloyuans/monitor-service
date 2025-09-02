@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -150,7 +151,7 @@ func listQueues(ctx context.Context, cfg config.RabbitMQConfig) ([]QueueInfo, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to query RabbitMQ management API: %w", err)
 	}
-	defer resp.Close()
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code from RabbitMQ management API: %d", resp.StatusCode)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +24,7 @@ func General(ctx context.Context, cfg config.GeneralConfig, bot *alert.AlertBot,
 		hostIP = "unknown"
 	}
 
-	// Placeholder: Check system uptime as an example
+	// Check system uptime as an example
 	uptime, err := getSystemUptime()
 	if err != nil {
 		slog.Error("Failed to get system uptime", "error", err, "component", "general")
@@ -75,10 +77,8 @@ func sendGeneralAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[s
 	return nil
 }
 
-// getSystemUptime returns the system uptime (placeholder implementation).
+// getSystemUptime returns the system uptime.
 func getSystemUptime() (time.Duration, error) {
-	// Placeholder: Implement actual uptime check using system calls or libraries
-	// For example, on Linux, read /proc/uptime
 	data, err := os.ReadFile("/proc/uptime")
 	if err != nil {
 		return 0, fmt.Errorf("failed to read /proc/uptime: %w", err)
