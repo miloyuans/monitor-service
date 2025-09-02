@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"monitor-service/alert"
@@ -21,6 +22,14 @@ func Nacos(ctx context.Context, cfg config.NacosConfig, bot *alert.AlertBot, ale
 	if err != nil {
 		slog.Warn("Failed to get private IP", "error", err, "component", "nacos")
 		hostIP = "unknown"
+	}
+
+	// Validate configuration parameters
+	if cfg.NacosDataID == "" || cfg.NacosGroup == "" {
+		details := fmt.Sprintf("配置参数无效: NacosDataID=%s, NacosGroup=%s", cfg.NacosDataID, cfg.NacosGroup)
+		slog.Error("Invalid Nacos configuration", "nacos_data_id", cfg.NacosDataID, "nacos_group", cfg.NacosGroup, "component", "nacos")
+		msg := bot.FormatAlert("Nacos告警", "配置参数异常", details, hostIP, "alert")
+		return sendNacosAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Nacos告警", "配置参数异常", details, hostIP, "alert", msg)
 	}
 
 	// Configure HTTP client with timeout
@@ -80,10 +89,10 @@ func Nacos(ctx context.Context, cfg config.NacosConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check configuration service availability
-	configURL := fmt.Sprintf("%s/nacos/v1/cs/configs?dataId=%s&group=%s", cfg.Address, cfg.NacosDataID, cfg.NacosGroup)
+	configURL := fmt.Sprintf("%s/nacos/v1/cs/configs?dataId=%s&group=%s", cfg.Address, alert.EscapeMarkdown(cfg.NacosDataID), alert.EscapeMarkdown(cfg.NacosGroup))
 	req, err = http.NewRequestWithContext(ctx, http.MethodGet, configURL, nil)
 	if err != nil {
-		slog.Error("Failed to create Nacos config request", "url", configURL, "error", err, "component", "nacos")
+		slog.Error("Failed to create Nacos config request", "url", configURL, "data_id", cfg.NacosDataID, "group", cfg.NacosGroup, "error", err, "component", "nacos")
 		details := fmt.Sprintf("无法创建配置服务请求: %v", err)
 		msg := bot.FormatAlert("Nacos告警", "配置服务请求失败", details, hostIP, "alert")
 		return sendNacosAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Nacos告警", "配置服务请求失败", details, hostIP, "alert", msg)
@@ -91,7 +100,7 @@ func Nacos(ctx context.Context, cfg config.NacosConfig, bot *alert.AlertBot, ale
 
 	resp, err = client.Do(req)
 	if err != nil {
-		slog.Error("Failed to get Nacos config", "url", configURL, "error", err, "component", "nacos")
+		slog.Error("Failed to get Nacos config", "url", configURL, "data_id", cfg.NacosDataID, "group", cfg.NacosGroup, "error", err, "component", "nacos")
 		details := fmt.Sprintf("无法访问配置服务: %v", err)
 		msg := bot.FormatAlert("Nacos告警", "配置服务访问失败", details, hostIP, "alert")
 		return sendNacosAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Nacos告警", "配置服务访问失败", details, hostIP, "alert", msg)
@@ -99,7 +108,7 @@ func Nacos(ctx context.Context, cfg config.NacosConfig, bot *alert.AlertBot, ale
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		slog.Error("Nacos config returned non-OK status", "url", configURL, "status", resp.StatusCode, "component", "nacos")
+		slog.Error("Nacos config returned non-OK status", "url", configURL, "data_id", cfg.NacosDataID, "group", cfg.NacosGroup, "status", resp.StatusCode, "component", "nacos")
 		details := fmt.Sprintf("配置服务返回非 200 状态码: %d", resp.StatusCode)
 		msg := bot.FormatAlert("Nacos告警", "配置服务状态异常", details, hostIP, "alert")
 		return sendNacosAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Nacos告警", "配置服务状态异常", details, hostIP, "alert", msg)
