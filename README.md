@@ -9,3 +9,15 @@ go build -o monitor-service ./cmd/monitor-service
 ```
 go build -p 1 -o monitor-service ./cmd/monitor-service
 ```
+
+## install
+```
+systemctl daemon-reload
+systemctl enable monitoring.service
+systemctl restart monitoring.service
+```
+### delete
+```
+systemctl stop monitoring.service
+systemctl disable monitoring.service
+```
