@@ -218,27 +218,27 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 			return fmt.Errorf("failed to save initial processes: %w", err)
 		}
 	} else {
-		// Filter processes with empty CMD or containing "systemd-user" for logging only
+		// Filter processes with empty CMD or containing "systemd-" for logging only
 		var logAddedProcs, logRemovedProcs []ProcessInfo
 		addedProcs, removedProcs = diffProcesses(currentProcesses, initialProcesses)
 		for _, p := range addedProcs {
-			if p.CMD == "" || strings.Contains(strings.ToLower(p.CMD), "systemd-user") {
+			if p.CMD == "" || strings.Contains(strings.ToLower(p.CMD), "systemd-") {
 				logAddedProcs = append(logAddedProcs, p)
 			} else {
 				alertAddedProcs = append(alertAddedProcs, p)
 			}
 		}
 		for _, p := range removedProcs {
-			if p.CMD == "" || strings.Contains(strings.ToLower(p.CMD), "systemd-user") {
+			if p.CMD == "" || strings.Contains(strings.ToLower(p.CMD), "systemd-") {
 				logRemovedProcs = append(logRemovedProcs, p)
 			} else {
 				alertRemovedProcs = append(alertRemovedProcs, p)
 			}
 		}
 
-		// Log processes with empty CMD or containing "systemd-user" to .pslogs
+		// Log processes with empty CMD or containing "systemd-" to .pslogs
 		if len(logAddedProcs) > 0 || len(logRemovedProcs) > 0 {
-			slog.Info("Logging process changes with empty CMD or containing 'systemd-user' to .pslogs", "added", len(logAddedProcs), "removed", len(logRemovedProcs), "component", "system")
+			slog.Info("Logging process changes with empty CMD or containing 'systemd-' to .pslogs", "added", len(logAddedProcs), "removed", len(logRemovedProcs), "component", "system")
 			if err := logChange(processLogFile, "process", logAddedProcs, logRemovedProcs); err != nil {
 				slog.Error("Failed to log process changes to .pslogs", "error", err, "component", "system")
 				details.WriteString(fmt.Sprintf("无法记录空 CMD 或 systemd 进程变更: %v", err))
@@ -250,7 +250,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 			}
 		}
 
-		// Send alerts for processes with non-empty CMD and not containing "systemd-user"
+		// Send alerts for processes with non-empty CMD and not containing "systemd-"
 		if len(alertAddedProcs) > 0 || len(alertRemovedProcs) > 0 {
 			hasIssue = true
 			if len(alertAddedProcs) > 0 {
@@ -275,14 +275,14 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 						p.User, p.PID, p.PPID, p.STIME, p.TTY, p.TIME, p.CMD)
 				}
 			}
-			slog.Info("Detected process changes with non-empty CMD and not containing 'systemd-user'", "added", len(alertAddedProcs), "removed", len(alertRemovedProcs), "component", "system")
+			slog.Info("Detected process changes with non-empty CMD and not containing 'systemd-'", "added", len(alertAddedProcs), "removed", len(alertRemovedProcs), "component", "system")
 			if bot != nil {
 				msg := bot.FormatAlert("系统告警", "进程变更", details.String(), hostIP, "alert")
 				if err := sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", msg); err != nil {
 					return fmt.Errorf("failed to send process change alert: %w", err)
 				}
 			}
-			// Log all process changes (including empty CMD and systemd-userrelated) to .changeLog.jsonl
+			// Log all process changes (including empty CMD and systemd-related) to .changeLog.jsonl
 			if err := logChange(changeLogFile, "process", addedProcs, removedProcs); err != nil {
 				slog.Error("Failed to log process change", "error", err, "component", "system")
 				details.WriteString(fmt.Sprintf("无法记录进程变更: %v", err))
@@ -303,7 +303,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 				return fmt.Errorf("failed to update initial processes: %w", err)
 			}
 		} else {
-			slog.Debug("No process changes with non-empty CMD and not containing 'systemd-user' detected", "added", len(alertAddedProcs), "removed", len(alertRemovedProcs), "component", "system")
+			slog.Debug("No process changes with non-empty CMD and not containing 'systemd-' detected", "added", len(alertAddedProcs), "removed", len(alertRemovedProcs), "component", "system")
 		}
 	}
 

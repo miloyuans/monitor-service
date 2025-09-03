@@ -1,42 +1,150 @@
-# default false
-# monitoring:
-#   enabled: true
-# telegram:
-#   bot_token: "124abc"
-#   chat_id: 123456789
-# rabbitmq:
-#   enabled: false
-#   url: "http://localhost:15672"
-#   address: "http://localhost:15672" # Added for management API
-#   username: "guest"
-#   password: "guest"
-#   cluster_name: "rabbitmq-cluster"
-# redis:
-#   enabled: false
-#   addr: "localhost:6379"
-#   password: ""
-#   db: 0
-#   cluster_name: "redis-cluster"
-#   big_key_threshold: 1000000
-# mysql:
-#   enabled: false
-#   dsn: "user:password@tcp(localhost:3306)/dbname"
-#   cluster_name: "mysql-cluster"
-#   max_connections: 100
-# nacos:
-#   enabled: false
-#   address: "http://localhost:8848"
-#   cluster_name: "nacos-cluster"
-# host_monitoring:
-#   enabled: false
-#   cpu_threshold: 80.0
-#   mem_threshold: 80.0
-#   disk_threshold: 90.0
-#   net_io_threshold: 1.0  # 1 GB/s
-#   disk_io_threshold: 1.0 # 1 GB/s
-# system_monitoring:
-#   enabled: false
+# Monitor Service Configuration
+# This YAML file configures the monitoring service, including global settings,
+# Telegram alerting, and module-specific monitoring configurations.
+
+# Global cluster name for identifying the environment
+# Required, must be non-empty
 cluster_name: "default-cluster"
-show_hostname: false
-alert_silence_duration: 60 # minutes
+
+# Whether to show the hostname in alerts
+# Default: false
+show_hostname: true
+
+# Interval between monitoring checks (e.g., "30s", "1m", "1h")
+# Required, must be a valid duration string
 check_interval: "30s"
+
+# Duration in minutes to suppress duplicate alerts
+# Required, must be positive
+alert_silence_duration: 2
+
+# Global Telegram configuration for alerts
+# Used by all modules unless overridden by module-specific settings (e.g., mysql.telegram)
+# Required if any monitoring is enabled and no module-specific Telegram config is provided
+telegram:
+  # Telegram bot token (e.g., "123456:ABC-DEF1234ghIkl-xyz")
+  # Default: empty
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+  # Telegram chat ID (int64, e.g., -1001234567890 for groups)
+  # Default: 0
+  chat_id: YOUR_CHAT_ID_HERE
+
+# General monitoring configuration
+# Controls generic monitoring tasks
+monitoring:
+  # Whether general monitoring is enabled
+  # Default: false
+  enabled: true
+
+# Host monitoring configuration
+# Monitors CPU, memory, disk, and I/O metrics
+host_monitoring:
+  # Whether host monitoring is enabled
+  # Default: false
+  enabled: false
+  # CPU usage threshold (percentage, 0-100)
+  # Default: 80.0
+  cpu_threshold: 80.0
+  # Memory usage threshold (percentage, 0-100)
+  # Default: 80.0
+  mem_threshold: 80.0
+  # Disk usage threshold (percentage, 0-100)
+  # Default: 90.0
+  disk_threshold: 90.0
+  # Network I/O threshold (GB/s)
+  # Default: 1.0
+  net_io_threshold: 1.0
+  # Disk I/O threshold (GB/s)
+  # Default: 1.0
+  disk_io_threshold: 1.0
+
+# RabbitMQ monitoring configuration
+rabbitmq:
+  # Whether RabbitMQ monitoring is enabled
+  # Default: false
+  enabled: false
+  # AMQP connection URL
+  # Default: "amqp://guest:guest@localhost:5672/"
+  url: "amqp://guest:guest@localhost:5672/"
+  # Username for RabbitMQ
+  # Default: "guest"
+  username: "guest"
+  # Password for RabbitMQ
+  # Default: "guest"
+  password: "guest"
+  # Management API URL
+  # Default: "http://localhost:15672"
+  address: "http://localhost:15672"
+  # Cluster name for RabbitMQ
+  # Default: "rabbitmq-cluster"
+  cluster_name: "rabbitmq-cluster"
+
+# Redis monitoring configuration
+redis:
+  # Whether Redis monitoring is enabled
+  # Default: false
+  enabled: false
+  # Redis server address
+  # Default: "localhost:6379"
+  addr: "localhost:6379"
+  # Redis password (empty if none)
+  # Default: ""
+  password: ""
+  # Redis database number
+  # Default: 0
+  db: 0
+  # Cluster name for Redis
+  # Default: "redis-cluster"
+  cluster_name: "redis-cluster"
+  # Threshold for big keys (bytes)
+  # Default: 1048576 (1MB)
+  big_key_threshold: 1048576
+
+# MySQL monitoring configuration
+mysql:
+  # Whether MySQL monitoring is enabled
+  # Default: false
+  enabled: false
+  # Data Source Name (DSN) for MySQL connection
+  # Default: "root:password@tcp(localhost:3306)/mysql"
+  dsn: "root:password@tcp(localhost:3306)/mysql"
+  # Cluster name for MySQL
+  # Default: "mysql-cluster"
+  cluster_name: "mysql-cluster"
+  # Maximum allowed connections
+  # Default: 100
+  max_connections: 100
+  # Optional: MySQL-specific Telegram configuration
+  # If provided, MySQL alerts will use this bot and chat ID instead of the global telegram settings
+  telegram:
+    # Telegram bot token for MySQL-specific alerts
+    # Default: empty (falls back to global telegram.bot_token)
+    bot_token: "YOUR_MYSQL_BOT_TOKEN_HERE"
+    # Telegram chat ID for MySQL-specific alerts
+    # Default: 0 (falls back to global telegram.chat_id)
+    chat_id: YOUR_MYSQL_CHAT_ID_HERE
+
+# Nacos monitoring configuration
+nacos:
+  # Whether Nacos monitoring is enabled
+  # Default: false
+  enabled: false
+  # Nacos server address
+  # Default: "http://localhost:8848"
+  address: "http://localhost:8848"
+  # Cluster name for Nacos
+  # Default: "nacos-cluster"
+  cluster_name: "nacos-cluster"
+  # Test data ID for Nacos
+  # Default: "example"
+  nacos_data_id: "example"
+  # Test group for Nacos
+  # Default: "DEFAULT_GROUP"
+  nacos_group: "DEFAULT_GROUP"
+
+# System monitoring configuration
+# Monitors user and process changes, logs systemd-related and empty CMD processes to .pslogs
+system_monitoring:
+  # Whether system monitoring is enabled
+  # Default: false
+  enabled: false

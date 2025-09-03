@@ -57,10 +57,11 @@ type RedisConfig struct {
 
 // MySQLConfig holds MySQL-specific configuration.
 type MySQLConfig struct {
-	Enabled        bool   `mapstructure:"enabled"`
-	DSN            string `mapstructure:"dsn"`
-	ClusterName    string `mapstructure:"cluster_name"`
-	MaxConnections int    `mapstructure:"max_connections"`
+	Enabled        bool          `mapstructure:"enabled"`
+	DSN            string        `mapstructure:"dsn"`
+	ClusterName    string        `mapstructure:"cluster_name"`
+	MaxConnections int           `mapstructure:"max_connections"`
+	Telegram       TelegramConfig `mapstructure:"telegram"`
 }
 
 // NacosConfig holds Nacos-specific configuration.
@@ -68,8 +69,8 @@ type NacosConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`
 	Address     string `mapstructure:"address"`
 	ClusterName string `mapstructure:"cluster_name"`
-	NacosDataID  string `mapstructure:"nacos_data_id"`
-	NacosGroup   string `mapstructure:"nacos_group"`
+	NacosDataID string `mapstructure:"nacos_data_id"`
+	NacosGroup  string `mapstructure:"nacos_group"`
 }
 
 // HostConfig holds host monitoring configuration.
@@ -109,6 +110,8 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("mysql.dsn", "root:password@tcp(localhost:3306)/mysql")
 	viper.SetDefault("mysql.cluster_name", "mysql-cluster")
 	viper.SetDefault("mysql.max_connections", 100)
+	viper.SetDefault("mysql.telegram.bot_token", "")
+	viper.SetDefault("mysql.telegram.chat_id", 0)
 	viper.SetDefault("nacos.enabled", false)
 	viper.SetDefault("nacos.address", "http://localhost:8848")
 	viper.SetDefault("nacos.cluster_name", "nacos-cluster")
@@ -154,12 +157,12 @@ func LoadConfig(path string) (Config, error) {
 
 // Validate validates the configuration parameters.
 func (c Config) Validate() error {
-	// Validate Telegram configuration (required for alerts)
-	if c.Telegram.BotToken == "" {
-		return fmt.Errorf("telegram.bot_token is required")
+	// Validate global Telegram configuration (optional if no monitoring is enabled or module-specific config exists)
+	if c.IsAnyMonitoringEnabled() && c.Telegram.BotToken == "" && !c.MySQL.HasIndependentTelegramConfig() {
+		return fmt.Errorf("telegram.bot_token is required when any monitoring is enabled and no module-specific Telegram config is provided")
 	}
-	if c.Telegram.ChatID == 0 {
-		return fmt.Errorf("telegram.chat_id is required and must be non-zero")
+	if c.IsAnyMonitoringEnabled() && c.Telegram.ChatID == 0 && !c.MySQL.HasIndependentTelegramConfig() {
+		return fmt.Errorf("telegram.chat_id is required and must be non-zero when any monitoring is enabled and no module-specific Telegram config is provided")
 	}
 
 	// Validate cluster name
@@ -226,6 +229,15 @@ func (c Config) Validate() error {
 		if c.MySQL.MaxConnections <= 0 {
 			return fmt.Errorf("mysql.max_connections must be positive")
 		}
+		// Validate MySQL Telegram configuration if provided
+		if c.MySQL.HasIndependentTelegramConfig() {
+			if c.MySQL.Telegram.BotToken == "" {
+				return fmt.Errorf("mysql.telegram.bot_token is required when mysql.telegram is configured")
+			}
+			if c.MySQL.Telegram.ChatID == 0 {
+				return fmt.Errorf("mysql.telegram.chat_id is required and must be non-zero when mysql.telegram is configured")
+			}
+		}
 	}
 
 	// Validate Nacos configuration
@@ -269,6 +281,11 @@ func (c Config) Validate() error {
 	}
 
 	return nil
+}
+
+// HasIndependentTelegramConfig checks if MySQL has its own Telegram configuration.
+func (m MySQLConfig) HasIndependentTelegramConfig() bool {
+	return m.Telegram.BotToken != "" && m.Telegram.ChatID != 0
 }
 
 // IsAnyMonitoringEnabled checks if any monitoring feature is enabled.

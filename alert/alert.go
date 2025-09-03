@@ -22,13 +22,10 @@ type AlertBot struct {
 
 // NewAlertBot creates a new Telegram bot for alerts.
 func NewAlertBot(botToken string, chatID int64, clusterName string, showHostname bool) (*AlertBot, error) {
-	if botToken == "" {
-		slog.Error("Bot token is empty", "component", "alert")
-		return nil, fmt.Errorf("bot token is empty")
-	}
-	if chatID == 0 {
-		slog.Error("Chat ID is invalid", "component", "alert")
-		return nil, fmt.Errorf("invalid chat ID")
+	// Allow empty botToken and chatID for modules without alerting
+	if botToken == "" || chatID == 0 {
+		slog.Debug("No Telegram bot configured", "bot_token_empty", botToken == "", "chat_id_zero", chatID == 0, "component", "alert")
+		return nil, nil
 	}
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
@@ -52,6 +49,9 @@ func NewAlertBot(botToken string, chatID int64, clusterName string, showHostname
 
 // FormatAlert creates a standardized Markdown alert message.
 func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertType string) string {
+	if a == nil {
+		return ""
+	}
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	hostname := a.Hostname
 	if !a.ShowHostname {
@@ -60,17 +60,17 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 	var header string
 	switch alertType {
 	case "startup":
-		header = "**🚀 监控服务启动通知 Monitoring Service Startup 🚀**"
+		header = "**监控服务启动通知 Monitoring Service Startup**"
 	case "shutdown":
-		header = "**🛑 监控服务关闭通知 Monitoring Service Shutdown 🛑**"
+		header = "**监控服务关闭通知 Monitoring Service Shutdown**"
 	default:
-		header = "**🚨 监控 Monitoring 告警 Alert 🚨**"
+		header = "**监控 Monitoring 告警 Alert**"
 	}
 
 	// Escape all fields for MarkdownV2 to prevent parsing errors
 	header = EscapeMarkdown(header)
 	timestamp = EscapeMarkdown(timestamp)
-	clusterName := EscapeMarkdown(a.ClusterName)
+	clusterName = EscapeMarkdown(a.ClusterName)
 	hostname = EscapeMarkdown(hostname)
 	hostIP = EscapeMarkdown(hostIP)
 	serviceName = EscapeMarkdown(serviceName)
@@ -94,7 +94,15 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 
 // SendAlert sends a Telegram alert with the provided service name, event name, details, and host IP.
 func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, details, hostIP, alertType string) error {
+	if a == nil {
+		slog.Warn("Alert bot is nil, skipping alert", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
+		return nil
+	}
 	message := a.FormatAlert(serviceName, eventName, details, hostIP, alertType)
+	if message == "" {
+		slog.Warn("Empty alert message, skipping alert", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
+		return nil
+	}
 	msg := tgbotapi.NewMessage(a.ChatID, message)
 	msg.ParseMode = tgbotapi.ModeMarkdownV2 // Use MarkdownV2 for better escaping support
 
