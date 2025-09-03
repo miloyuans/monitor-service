@@ -73,7 +73,7 @@ func main() {
 	if cfg.IsAnyMonitoringEnabled() && globalBot != nil {
 		// Only include modules without independent Telegram configurations in global startup alert
 		var details strings.Builder
-		details.WriteString("监控服务已启动\n启用模块:\n")
+		details.WriteString("✅监控服务已启动✅\n启用模块:\n")
 		enabledModules := []string{}
 		if cfg.Monitoring.Enabled {
 			enabledModules = append(enabledModules, "General")
@@ -146,7 +146,7 @@ func main() {
 		// Send shutdown alerts
 		if globalBot != nil {
 			var details strings.Builder
-			details.WriteString("监控服务已停止\n已停止模块:\n")
+			details.WriteString("❌监控服务已停止❌\n已停止模块:\n")
 			enabledModules := []string{}
 			if cfg.Monitoring.Enabled {
 				enabledModules = append(enabledModules, "General")
