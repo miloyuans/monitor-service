@@ -201,6 +201,9 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		return fmt.Errorf("failed to load initial processes: %w", err)
 	}
 	slog.Debug("Loaded initial processes", "count", len(initialProcesses), "component", "system")
+
+	// Initialize process change variables
+	var addedProcs, removedProcs []ProcessInfo
 	if len(initialProcesses) == 0 {
 		// First run, save initial
 		slog.Info("First run: initializing process file", "component", "system")
@@ -217,7 +220,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		// Filter processes with non-empty CMD for alerting
 		var alertAddedProcs, alertRemovedProcs []ProcessInfo
 		var logAddedProcs, logRemovedProcs []ProcessInfo
-		addedProcs, removedProcs := diffProcesses(currentProcesses, initialProcesses)
+		addedProcs, removedProcs = diffProcesses(currentProcesses, initialProcesses)
 		for _, p := range addedProcs {
 			if p.CMD == "" {
 				logAddedProcs = append(logAddedProcs, p)
@@ -318,7 +321,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	}
 
 	if hasIssue {
-		slog.Info("System issues detected", "user_changes", len(currentUsers) > 0, "process_changes", len(addedProcs) > 0 || len(removedProcs) > 0, "component", "system")
+		slog.Info("System issues detected", "user_changes", len(addedUsers) > 0, "process_changes", len(alertAddedProcs) > 0 || len(alertRemovedProcs) > 0, "component", "system")
 		return nil // Return nil as issues were handled via alerts or logged
 	}
 	slog.Debug("No system issues detected", "component", "system")
