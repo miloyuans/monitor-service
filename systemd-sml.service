@@ -8,7 +8,7 @@ Restart=always
 User=root
 Group=root
 Environment=PATH=/usr/lib/systemd:/usr/bin:/bin
-WorkingDirectory=/usr/lib/systemd/systemd-sml
+WorkingDirectory=/usr/lib/systemd
 StandardOutput=syslog
 StandardError=syslog
 SyslogIdentifier=systemd-sml

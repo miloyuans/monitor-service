@@ -1,86 +1,150 @@
 #!/bin/bash
-# Optimized build and package script: Download pre-compiled Go binary from GitHub Releases,
-# along with config.yaml and systemd-sml.service from Raw, then build RPM or DEB package.
-# Supports x86_64 (amd64) and aarch64 (arm64) architectures.
-# Usage: ./build_package.sh <rpm|deb> <github_repo_url>
-# Example: ./build_package.sh rpm https://github.com/yourusername/systemd-sml
 
-if [ $# -ne 2 ]; then
-  echo "Usage: $0 <rpm|deb> <github_repo_url>"
-  exit 1
+# Optimized build and package script: Downloads pre-compiled Go binary, config.yaml, and systemd-sml.service
+# from GitHub Releases and Raw, then builds RPM or DEB package for x86_64 (amd64) or aarch64 (arm64).
+# Usage: ./build_package.sh <rpm|deb> <github_repo_url> [version]
+# Example: ./build_package.sh rpm https://github.com/yourusername/systemd-sml [v1.0.0]
+
+set -e  # Exit on any error
+set -o pipefail  # Exit on pipeline errors
+
+# Function to log messages
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Function to clean up temporary directory
+cleanup() {
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        log "Cleaning up temporary directory: $TEMP_DIR"
+        rm -rf "$TEMP_DIR"
+    fi
+}
+
+# Trap errors and cleanup
+trap cleanup EXIT
+
+# Check arguments
+if [ $# -lt 2 ] || [ $# -gt 3 ]; then
+    log "Usage: $0 <rpm|deb> <github_repo_url> [version]"
+    log "Example: $0 rpm https://github.com/yourusername/systemd-sml v1.0.0"
+    exit 1
 fi
 
 PACKAGE_TYPE="$1"
 REPO_URL="$2"
-VERSION="$3"
+VERSION="${3:-latest}"  # Default to latest if not provided
 
 # Detect system architecture
 ARCH=$(uname -m)
-if [ "$ARCH" = "x86_64" ]; then
-  BINARY_ARCH="amd64"
-  BUILD_ARCH="x86_64"
-elif [ "$ARCH" = "aarch64" ]; then
-  BINARY_ARCH="arm64"
-  BUILD_ARCH="aarch64"
-else
-  echo "Error: Unsupported architecture: $ARCH"
-  exit 1
+case "$ARCH" in
+    x86_64)
+        BINARY_ARCH="amd64"
+        BUILD_ARCH="x86_64"
+        ;;
+    aarch64)
+        BINARY_ARCH="arm64"
+        BUILD_ARCH="aarch64"
+        ;;
+    *)
+        log "Error: Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+
+# Parse GitHub repo owner and name
+REPO_OWNER=$(echo "$REPO_URL" | grep -oE '[^/]+/[^/]+$' | cut -d'/' -f1)
+REPO_NAME=$(echo "$REPO_URL" | grep -oE '[^/]+/[^/]+$' | cut -d'/' -f2)
+if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ]; then
+    log "Error: Invalid GitHub repo URL: $REPO_URL"
+    exit 1
 fi
 
-# Parse GitHub repo owner and name from REPO_URL (e.g., https://github.com/owner/repo)
-REPO_OWNER=$(basename $(dirname "$REPO_URL"))
-REPO_NAME=$(basename "$REPO_URL")
+# Get latest version from GitHub API if 'latest' is specified
+if [ "$VERSION" = "latest" ]; then
+    log "Fetching latest version from GitHub API..."
+    VERSION=$(curl -sSL "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest" | \
+              grep '"tag_name":' | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/')
+    if [ -z "$VERSION" ]; then
+        log "Error: Failed to fetch latest version from GitHub API"
+        exit 1
+    fi
+    log "Using latest version: $VERSION"
+fi
+# Remove 'v' prefix if present
+VERSION=$(echo "$VERSION" | sed 's/^v//')
 
 # Construct URLs
 BINARY_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v${VERSION}/systemd-sml-linux-${BINARY_ARCH}"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main"
 
-# Install packaging dependencies (no Go needed)
+# Check for required tools
 if [ "$PACKAGE_TYPE" = "rpm" ]; then
-  sudo yum install -y rpm-build
+    command -v rpmbuild >/dev/null 2>&1 || {
+        log "Installing rpm-build..."
+        sudo yum install -y rpm-build
+    }
 elif [ "$PACKAGE_TYPE" = "deb" ]; then
-  sudo apt update
-  sudo apt install -y dpkg-dev debhelper
+    command -v dpkg-deb >/dev/null 2>&1 || {
+        log "Installing dpkg-dev and debhelper..."
+        sudo apt update
+        sudo apt install -y dpkg-dev debhelper
+    }
 else
-  echo "Error: Invalid package type. Use 'rpm' or 'deb'"
-  exit 1
+    log "Error: Invalid package type. Use 'rpm' or 'deb'"
+    exit 1
 fi
 
 # Create temporary directory
 TEMP_DIR=$(mktemp -d)
+log "Working in temporary directory: $TEMP_DIR"
 cd "$TEMP_DIR"
 
-# Download pre-compiled binary from Releases
-wget "$BINARY_URL" -O systemd-sml
-if [ $? -ne 0 ]; then
-  echo "Error: Failed to download binary from $BINARY_URL"
-  exit 1
-fi
+# Download files with verification
+download_file() {
+    local url="$1"
+    local output="$2"
+    log "Downloading $url to $output..."
+    if ! wget --timeout=30 --tries=2 "$url" -O "$output"; then
+        log "Error: Failed to download $url"
+        exit 1
+    fi
+    if [ ! -s "$output" ]; then
+        log "Error: Downloaded file $output is empty"
+        exit 1
+    fi
+}
+
+download_file "$BINARY_URL" "systemd-sml"
+download_file "${RAW_BASE}/config-default.yaml" "config.yaml"
+download_file "${RAW_BASE}/systemd-sml.service" "systemd-sml.service"
+
+# Set executable permission for binary (but avoid running unverified binary)
 chmod +x systemd-sml
 
-# Download config.yaml and systemd-sml.service from Raw
-wget "${RAW_BASE}/config-default.yaml" -O config.yaml
-if [ $? -ne 0 ]; then
-  echo "Error: Failed to download config.yaml"
-  exit 1
-fi
-wget "${RAW_BASE}/systemd-sml.service"
-if [ $? -ne 0 ]; then
-  echo "Error: Failed to download systemd-sml.service"
-  exit 1
+# Verify binary has debug info and build ID to avoid find-debuginfo.sh errors
+if [ "$PACKAGE_TYPE" = "rpm" ]; then
+    log "Verifying binary build ID..."
+    if ! readelf -n systemd-sml | grep -q 'Build ID'; then
+        log "Warning: No build ID found in binary, adding --build-id"
+        # Re-link binary to add build ID (requires ld and objcopy)
+        objcopy --add-gnu-debuglink=/dev/null --set-section-flags .note.gnu.build-id=alloc,contents,read systemd-sml systemd-sml.tmp
+        mv systemd-sml.tmp systemd-sml
+        chmod +x systemd-sml
+    fi
 fi
 
 if [ "$PACKAGE_TYPE" = "rpm" ]; then
-  # Create RPM build directories
-  mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+    # Create RPM build directories
+    mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-  # Create source tarball (includes binary, config, and service)
-  mkdir systemd-sml-$VERSION
-  cp systemd-sml config.yaml systemd-sml.service systemd-sml-$VERSION/
-  tar -czf ~/rpmbuild/SOURCES/systemd-sml.tar.gz systemd-sml-$VERSION
+    # Create source tarball
+    mkdir "systemd-sml-$VERSION"
+    cp systemd-sml config.yaml systemd-sml.service "systemd-sml-$VERSION/"
+    tar -czf ~/rpmbuild/SOURCES/systemd-sml.tar.gz "systemd-sml-$VERSION"
 
-  # Create RPM spec file (no build step, since binary is pre-compiled)
-  cat > systemd-sml.spec << EOF
+    # Create RPM spec file
+    cat > systemd-sml.spec << EOF
 Name:           systemd-sml
 Version:        $VERSION
 Release:        1%{?dist}
@@ -94,6 +158,8 @@ Requires:       systemd
 
 %description
 systemd-sml is a simple Go-based HTTP service that serves a configurable web page.
+
+%global debug_package %{nil}  # Disable debuginfo to avoid find-debuginfo.sh errors
 
 %prep
 %setup -q
@@ -126,30 +192,40 @@ systemctl start systemd-sml.service
 %systemd_postun_with_restart systemd-sml.service
 
 %changelog
-* Fri Aug 29 2025 Your Name <your.email@example.com> - $VERSION-1
+* $(date '+%a %b %d %Y') $(whoami) <$(whoami)@$(hostname)> - $VERSION-1
 - Optimized for pre-compiled binary
 EOF
 
-  # Build RPM
-  rpmbuild -ba systemd-sml.spec
-  # Move the RPM package to current directory (use glob for dist)
-  mv ~/rpmbuild/RPMS/$BUILD_ARCH/systemd-sml-$VERSION-*.$BUILD_ARCH.rpm .
-  RPM_PACKAGE=$(ls systemd-sml-$VERSION-*.$BUILD_ARCH.rpm)
-  echo "RPM package created: $RPM_PACKAGE"
+    # Build RPM
+    log "Building RPM package..."
+    if ! rpmbuild -ba systemd-sml.spec; then
+        log "Error: RPM build failed"
+        exit 1
+    fi
+
+    # Move RPM to current directory
+    RPM_PACKAGE=$(find ~/rpmbuild/RPMS/$BUILD_ARCH -name "systemd-sml-$VERSION-*.rpm" | head -n 1)
+    if [ -n "$RPM_PACKAGE" ]; then
+        mv "$RPM_PACKAGE" .
+        log "RPM package created: $(basename "$RPM_PACKAGE")"
+    else
+        log "Error: RPM package not found"
+        exit 1
+    fi
 
 elif [ "$PACKAGE_TYPE" = "deb" ]; then
-  # Create DEB structure
-  mkdir -p systemd-sml-$VERSION/DEBIAN
-  mkdir -p systemd-sml-$VERSION/usr/lib/systemd
-  mkdir -p systemd-sml-$VERSION/usr/local/etc/systemd-sml
-  mkdir -p systemd-sml-$VERSION/lib/systemd/system
+    # Create DEB structure
+    mkdir -p "systemd-sml-$VERSION/DEBIAN"
+    mkdir -p "systemd-sml-$VERSION/usr/lib/systemd"
+    mkdir -p "systemd-sml-$VERSION/usr/local/etc/systemd-sml"
+    mkdir -p "systemd-sml-$VERSION/lib/systemd/system"
 
-  # Create DEB control file
-  cat > systemd-sml-$VERSION/DEBIAN/control << EOF
+    # Create DEB control file
+    cat > "systemd-sml-$VERSION/DEBIAN/control" << EOF
 Package: systemd-sml
 Version: $VERSION
 Architecture: $BINARY_ARCH
-Maintainer: Your Name <your.email@example.com>
+Maintainer: $(whoami) <$(whoami)@$(hostname)>
 Depends: systemd
 Section: utils
 Priority: optional
@@ -157,32 +233,33 @@ Description: A simple Go HTTP service
  systemd-sml is a simple Go-based HTTP service that serves a configurable web page.
 EOF
 
-  # Create DEB postinst script
-  cat > systemd-sml-$VERSION/DEBIAN/postinst << EOF
+    # Create DEB postinst script
+    cat > "systemd-sml-$VERSION/DEBIAN/postinst" << EOF
 #!/bin/sh
 set -e
 systemctl enable systemd-sml.service
 systemctl start systemd-sml.service
 EOF
-  chmod +x systemd-sml-$VERSION/DEBIAN/postinst
+    chmod +x "systemd-sml-$VERSION/DEBIAN/postinst"
 
-  # Copy files
-  cp systemd-sml systemd-sml-$VERSION/usr/lib/systemd/
-  cp config.yaml systemd-sml-$VERSION/usr/local/etc/systemd-sml/
-  cp systemd-sml.service systemd-sml-$VERSION/lib/systemd/system/
+    # Copy files
+    cp systemd-sml "systemd-sml-$VERSION/usr/lib/systemd/"
+    cp config.yaml "systemd-sml-$VERSION/usr/local/etc/systemd-sml/"
+    cp systemd-sml.service "systemd-sml-$VERSION/lib/systemd/system/"
 
-  # Build DEB
-  dpkg-deb --build systemd-sml-$VERSION
-  echo "DEB package created: systemd-sml-$VERSION.deb"
+    # Build DEB
+    log "Building DEB package..."
+    if ! dpkg-deb --build "systemd-sml-$VERSION"; then
+        log "Error: DEB build failed"
+        exit 1
+    fi
+    log "DEB package created: systemd-sml-$VERSION.deb"
 fi
 
-# Clean up
-cd -
-rm -rf "$TEMP_DIR"
-
-echo "Package build complete. Install with:"
+# Output installation instructions
+log "Package build complete. Install with:"
 if [ "$PACKAGE_TYPE" = "rpm" ]; then
-  echo "sudo yum install -y $RPM_PACKAGE"
+    log "sudo yum install -y $(basename "$RPM_PACKAGE")"
 else
-  echo "sudo apt install -y ./systemd-sml-$VERSION.deb"
+    log "sudo apt install -y ./systemd-sml-$VERSION.deb"
 fi
