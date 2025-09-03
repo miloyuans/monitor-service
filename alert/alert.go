@@ -121,7 +121,7 @@ func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, detail
 
 // EscapeMarkdown escapes Telegram MarkdownV2 special characters to prevent formatting issues.
 func EscapeMarkdown(text string) string {
-	specialChars := []string{"_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!", "⊕", "⊖", "🚀", "✅", "❌"}
+	specialChars := []string{"_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"}
 	for _, char := range specialChars {
 		text = strings.ReplaceAll(text, char, "\\"+char)
 	}
