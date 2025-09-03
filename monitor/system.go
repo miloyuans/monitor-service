@@ -68,6 +68,9 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	var details strings.Builder
 	hasIssue := false
 
+	// Initialize user change variables
+	var addedUsers, removedUsers []string
+
 	// Check and cleanup historical files every 30 days
 	if shouldCleanup(lastCleanupFile, 30*24*time.Hour) {
 		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
@@ -136,14 +139,14 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 			return fmt.Errorf("failed to save initial users: %w", err)
 		}
 	} else {
-		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
+		addedUsers, removedUsers = diffStrings(currentUsers, initialUsers)
 		if len(addedUsers) > 0 || len(removedUsers) > 0 {
 			hasIssue = true
 			if len(addedUsers) > 0 {
-				fmt.Fprintf(&details, "**✅⊕增加的用户⊕**:\n- %s\n", strings.Join(addedUsers, "\n- "))
+				fmt.Fprintf(&details, "**增加的用户**:\n- %s\n", strings.Join(addedUsers, "\n- "))
 			}
 			if len(removedUsers) > 0 {
-				fmt.Fprintf(&details, "**❌⊖减少的用户⊖**:\n- %s\n", strings.Join(removedUsers, "\n- "))
+				fmt.Fprintf(&details, "**减少的用户**:\n- %s\n", strings.Join(removedUsers, "\n- "))
 			}
 			slog.Info("Detected user changes", "added_users", addedUsers, "removed_users", removedUsers, "component", "system")
 			if bot != nil {
@@ -179,6 +182,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	}
 
 	// Monitor processes
+	var addedProcs, removedProcs, alertAddedProcs, alertRemovedProcs []ProcessInfo
 	currentProcesses, err := getCurrentProcesses(ctx)
 	if err != nil {
 		slog.Error("Failed to get current processes", "error", err, "component", "system")
@@ -201,9 +205,6 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		return fmt.Errorf("failed to load initial processes: %w", err)
 	}
 	slog.Debug("Loaded initial processes", "count", len(initialProcesses), "component", "system")
-
-	// Initialize process change variables
-	var addedProcs, removedProcs []ProcessInfo
 	if len(initialProcesses) == 0 {
 		// First run, save initial
 		slog.Info("First run: initializing process file", "component", "system")
@@ -218,7 +219,6 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		}
 	} else {
 		// Filter processes with non-empty CMD for alerting
-		var alertAddedProcs, alertRemovedProcs []ProcessInfo
 		var logAddedProcs, logRemovedProcs []ProcessInfo
 		addedProcs, removedProcs = diffProcesses(currentProcesses, initialProcesses)
 		for _, p := range addedProcs {
@@ -254,7 +254,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		if len(alertAddedProcs) > 0 || len(alertRemovedProcs) > 0 {
 			hasIssue = true
 			if len(alertAddedProcs) > 0 {
-				details.WriteString("**✅⊕增加的进程**:\n")
+				details.WriteString("**增加的进程**:\n")
 				fmt.Fprintf(&details, "| %s | %s | %s | %s | %s | %s | %s |\n",
 					"UID", "PID", "PPID", "STIME", "TTY", "TIME", "CMD")
 				fmt.Fprintf(&details, "|%s|%s|%s|%s|%s|%s|%s|\n",
@@ -265,7 +265,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 				}
 			}
 			if len(alertRemovedProcs) > 0 {
-				details.WriteString("**❌⊖减少的进程⊖**:\n")
+				details.WriteString("**减少的进程**:\n")
 				fmt.Fprintf(&details, "| %s | %s | %s | %s | %s | %s | %s |\n",
 					"UID", "PID", "PPID", "STIME", "TTY", "TIME", "CMD")
 				fmt.Fprintf(&details, "|%s|%s|%s|%s|%s|%s|%s|\n",
@@ -321,7 +321,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	}
 
 	if hasIssue {
-		slog.Info("System issues detected", "user_changes", len(addedUsers) > 0, "process_changes", len(alertAddedProcs) > 0 || len(alertRemovedProcs) > 0, "component", "system")
+		slog.Info("System issues detected", "user_changes", len(addedUsers) > 0 || len(removedUsers) > 0, "process_changes", len(alertAddedProcs) > 0 || len(alertRemovedProcs) > 0, "component", "system")
 		return nil // Return nil as issues were handled via alerts or logged
 	}
 	slog.Debug("No system issues detected", "component", "system")
