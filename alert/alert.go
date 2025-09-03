@@ -60,11 +60,11 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 	var header string
 	switch alertType {
 	case "startup":
-		header = "🚀 *监控服务启动通知 Monitoring Service Startup* 🚀"
+		header = "**🚀 监控服务启动通知 Monitoring Service Startup 🚀**"
 	case "shutdown":
-		header = "🛑 *监控服务关闭通知 Monitoring Service Shutdown* 🛑"
+		header = "**🛑 监控服务关闭通知 Monitoring Service Shutdown 🛑**"
 	default:
-		header = "🚨 *监控 Monitoring 告警 Alert* 🚨"
+		header = "**🚨 监控 Monitoring 告警 Alert 🚨**"
 	}
 
 	// Escape all fields for MarkdownV2 to prevent parsing errors
