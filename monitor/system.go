@@ -143,10 +143,10 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		if len(addedUsers) > 0 || len(removedUsers) > 0 {
 			hasIssue = true
 			if len(addedUsers) > 0 {
-				fmt.Fprintf(&details, "**增加的用户**:\n- %s\n", strings.Join(addedUsers, "\n- "))
+				fmt.Fprintf(&details, "**✅⊕增加的用户⊕**:\n- %s\n", strings.Join(addedUsers, "\n- "))
 			}
 			if len(removedUsers) > 0 {
-				fmt.Fprintf(&details, "**减少的用户**:\n- %s\n", strings.Join(removedUsers, "\n- "))
+				fmt.Fprintf(&details, "**❌⊖减少的用户⊖**:\n- %s\n", strings.Join(removedUsers, "\n- "))
 			}
 			slog.Info("Detected user changes", "added_users", addedUsers, "removed_users", removedUsers, "component", "system")
 			if bot != nil {
@@ -254,7 +254,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		if len(alertAddedProcs) > 0 || len(alertRemovedProcs) > 0 {
 			hasIssue = true
 			if len(alertAddedProcs) > 0 {
-				details.WriteString("**增加的进程**:\n")
+				details.WriteString("**✅⊕增加的进程⊕**:\n")
 				fmt.Fprintf(&details, "| %s | %s | %s | %s | %s | %s | %s |\n",
 					"UID", "PID", "PPID", "STIME", "TTY", "TIME", "CMD")
 				fmt.Fprintf(&details, "|%s|%s|%s|%s|%s|%s|%s|\n",
@@ -265,7 +265,7 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 				}
 			}
 			if len(alertRemovedProcs) > 0 {
-				details.WriteString("**减少的进程**:\n")
+				details.WriteString("**❌⊖减少的进程⊖**:\n")
 				fmt.Fprintf(&details, "| %s | %s | %s | %s | %s | %s | %s |\n",
 					"UID", "PID", "PPID", "STIME", "TTY", "TIME", "CMD")
 				fmt.Fprintf(&details, "|%s|%s|%s|%s|%s|%s|%s|\n",
