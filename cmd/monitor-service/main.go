@@ -280,7 +280,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			name:    "MySQL",
 			enabled: cfg.MySQL.Enabled,
 			bot:     mysqlBot,
-			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, time.Duration) error {
+			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
 				return monitor.MySQL(ctx, cfg.(config.MySQLConfig), bot, cache, mutex, duration)
 			},
 			cfg:     cfg.MySQL,
