@@ -333,7 +333,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check deadlocks
-	currentDeadlocks, err := getCurrentDeadlocks(db, ctx)
+	currentDeadlocks, err = getCurrentDeadlocks(db, ctx)
 	if err == nil && currentDeadlocks > state.LastDeadlocks {
 		hasIssue = true
 		deadlockIncrement := currentDeadlocks - state.LastDeadlocks
