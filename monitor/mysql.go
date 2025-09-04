@@ -117,6 +117,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 
 	// Initialize details for alert message
 	var details strings.Builder
+	var variableName string
 	hasIssue := false
 
 	// Open database connection
@@ -323,7 +324,6 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check connections
-	var variableName string
 	var threads int
 	err = db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Threads_connected'").Scan(&variableName, &threads)
 	if err == nil && threads > cfg.MaxConnections {
@@ -335,13 +335,14 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check slow queries
-	currentSlowQueries, err := getCurrentSlowQueries(db, ctx)
-	if err == nil && currentSlowQueries > state.LastSlowQueries {
+	var slowQueries uint64
+	err = db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Slow_queries'").Scan(&variableName, &slowQueries)
+	if err == nil && slowQueries > state.LastSlowQueries {
 		hasIssue = true
-		slowIncrement := currentSlowQueries - state.LastSlowQueries
+		slowIncrement := slowQueries - state.LastSlowQueries
 		details.WriteString(fmt.Sprintf("检测到新慢查询数量: %d\n", slowIncrement))
 		slog.Info("MySQL new slow queries detected", "increment", slowIncrement, "component", "mysql")
-		state.LastSlowQueries = currentSlowQueries
+		state.LastSlowQueries = slowQueries
 	} else if err != nil {
 		slog.Warn("Failed to query Slow_queries", "error", err, "component", "mysql")
 	}
