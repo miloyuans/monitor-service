@@ -34,14 +34,18 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		hostIP = "unknown"
 	}
 
+	// Initialize details for alert message
+	var details strings.Builder
+	hasIssue := false
+
 	// Open database connection
 	db, err := sql.Open("mysql", cfg.DSN)
 	if err != nil {
 		slog.Error("Failed to open MySQL connection", "dsn", cfg.DSN, "error", err, "component", "mysql")
-		details := fmt.Sprintf("无法打开数据库连接: %v", err)
+		details.WriteString(fmt.Sprintf("无法打开数据库连接: %v", err))
 		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "连接失败", details, hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "连接失败", details, hostIP, "alert", msg); err != nil {
+			msg := bot.FormatAlert("数据库告警", "连接失败", details.String(), hostIP, "alert")
+			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "连接失败", details.String(), hostIP, "alert", msg); err != nil {
 				return err
 			}
 		}
@@ -57,7 +61,6 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 			isRunning = false
 			currentTime := time.Now()
 			lastStopTime = currentTime
-			var details strings.Builder
 			if !lastStartTime.IsZero() {
 				runtimeMin := int(currentTime.Sub(lastStartTime).Minutes())
 				details.WriteString(fmt.Sprintf("MySQL 服务停止，运行了 %d 分钟", runtimeMin))
@@ -81,9 +84,9 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		lastStartTime = time.Now()
 		isFirstRun = false
 		if bot != nil {
-			details := "连接数据库正常"
-			msg := bot.FormatAlert("数据库告警", "首次连接", details, hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "首次连接", details, hostIP, "alert", msg); err != nil {
+			details.WriteString("连接数据库正常")
+			msg := bot.FormatAlert("数据库告警", "首次连接", details.String(), hostIP, "alert")
+			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "首次连接", details.String(), hostIP, "alert", msg); err != nil {
 				return err
 			}
 		}
@@ -95,25 +98,17 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	if !isRunning {
 		isRunning = true
 		currentTime := time.Now()
-		var details strings.Builder
 		if !lastStopTime.IsZero() {
 			downtimeMin := int(currentTime.Sub(lastStopTime).Minutes())
 			details.WriteString(fmt.Sprintf("MySQL 服务恢复正常，停机了 %d 分钟\n", downtimeMin))
+			hasIssue = true
 		} else {
 			details.WriteString("MySQL 服务恢复正常\n")
+			hasIssue = true
 		}
 		lastStartTime = currentTime
 		lastStopTime = time.Time{}
-		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "服务恢复", details.String(), hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务恢复", details.String(), hostIP, "alert", msg); err != nil {
-				return err
-			}
-		}
 	}
-
-	// Initialize details for other issues
-	hasIssue := false
 
 	// Check slave status
 	rows, err := db.QueryContext(ctx, "SHOW SLAVE STATUS")
@@ -220,11 +215,15 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		lastSlowQueries = currentSlowQueries
 	}
 
-	// Send alert for other issues (slave status, deadlocks, connections, slow queries)
+	// Send alert for recovery or other issues (slave status, deadlocks, connections, slow queries)
 	if hasIssue && details.Len() > 0 {
 		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "异常", details.String(), hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "异常", details.String(), hostIP, "alert", msg); err != nil {
+			eventName := "异常"
+			if strings.Contains(details.String(), "MySQL 服务恢复正常") {
+				eventName = "服务恢复"
+			}
+			msg := bot.FormatAlert("数据库告警", eventName, details.String(), hostIP, "alert")
+			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", eventName, details.String(), hostIP, "alert", msg); err != nil {
 				return err
 			}
 		}
