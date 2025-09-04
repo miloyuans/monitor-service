@@ -20,13 +20,14 @@ import (
 
 // MySQLState holds the persistent state for the MySQL monitor.
 type MySQLState struct {
-	InitTime         time.Time `json:"initTime"`
-	LastUptime       uint64    `json:"lastUptime"`
-	LastCheckTime    time.Time `json:"lastCheckTime"`
-	LastStopTime     time.Time `json:"lastStopTime"`
-	LastDeadlocks    uint64    `json:"lastDeadlocks"`
-	LastSlowQueries  uint64    `json:"lastSlowQueries"`
-	IsStopped        bool      `json:"isStopped"`
+	InitTime            time.Time `json:"initTime"`
+	LastUptime          uint64    `json:"lastUptime"`
+	LastCheckTime       time.Time `json:"lastCheckTime"`
+	LastStopTime        time.Time `json:"lastStopTime"`
+	LastDeadlocks       uint64    `json:"lastDeadlocks"`
+	LastSlowQueries     uint64    `json:"lastSlowQueries"`
+	IsStopped           bool      `json:"isStopped"`
+	LastMonitorStartTime time.Time `json:"lastMonitorStartTime"`
 }
 
 const stateFile = ".mysql_init.json"
@@ -210,13 +211,14 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 			}
 		}
 		state = &MySQLState{
-			InitTime:        currentTime,
-			LastUptime:      uptime,
-			LastCheckTime:   currentTime,
-			LastStopTime:    time.Time{},
-			LastDeadlocks:   currentDeadlocks,
-			LastSlowQueries: currentSlowQueries,
-			IsStopped:       false,
+			InitTime:            currentTime,
+			LastUptime:          uptime,
+			LastCheckTime:       currentTime,
+			LastStopTime:        time.Time{},
+			LastDeadlocks:       currentDeadlocks,
+			LastSlowQueries:     currentSlowQueries,
+			IsStopped:           false,
+			LastMonitorStartTime: currentTime,
 		}
 		if err := saveState(state); err != nil {
 			return err
@@ -226,6 +228,19 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Not first run
+	// Check if this is a monitor restart (within 1 minute of last monitor start)
+	isMonitorRestart := currentTime.Sub(state.LastMonitorStartTime) < time.Minute
+	if isMonitorRestart && !state.IsStopped {
+		details.WriteString("监控启动, 连接数据库正常")
+		if bot != nil {
+			msg := bot.FormatAlert("数据库告警", "监控启动", details.String(), hostIP, "alert")
+			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动", details.String(), hostIP, "alert", msg); err != nil {
+				return err
+			}
+		}
+		details.Reset() // Clear for other issues
+	}
+
 	if state.IsStopped {
 		downtimeMin := int(currentTime.Sub(state.LastStopTime).Minutes())
 		details.WriteString(fmt.Sprintf("MySQL 服务恢复正常，停机了 %d 分钟", downtimeMin))
@@ -240,21 +255,13 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		state.LastDeadlocks = currentDeadlocks
 		state.LastSlowQueries = currentSlowQueries
 		state.IsStopped = false
-	} else {
-		details.WriteString("监控启动, 连接数据库正常")
-		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "监控启动", details.String(), hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动", details.String(), hostIP, "alert", msg); err != nil {
-				return err
-			}
-		}
-		details.Reset() // Clear for other issues
 	}
 
 	// Update state
 	state.LastUptime = uptime
 	state.LastCheckTime = currentTime
 	state.LastStopTime = time.Time{}
+	state.LastMonitorStartTime = currentTime
 	if err := saveState(state); err != nil {
 		return err
 	}
@@ -333,7 +340,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check deadlocks
-	currentDeadlocks, err = getCurrentDeadlocks(db, ctx)
+	currentDeadlocks, err := getCurrentDeadlocks(db, ctx)
 	if err == nil && currentDeadlocks > state.LastDeadlocks {
 		hasIssue = true
 		deadlockIncrement := currentDeadlocks - state.LastDeadlocks
