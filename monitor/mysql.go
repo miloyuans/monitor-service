@@ -149,6 +149,13 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 					return err
 				}
 			}
+		} else if !fileExisted {
+			if bot != nil {
+				msg := bot.FormatAlert("数据库告警", "连接失败", details.String(), hostIP, "alert")
+				if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "连接失败", details.String(), hostIP, "alert", msg); err != nil {
+					return err
+				}
+			}
 		}
 		return fmt.Errorf("failed to open MySQL connection: %w", err)
 	}
@@ -182,21 +189,32 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 					return err
 				}
 			}
+		} else if !fileExisted {
+			if bot != nil {
+				msg := bot.FormatAlert("数据库告警", "连接失败", details.String(), hostIP, "alert")
+				if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "连接失败", details.String(), hostIP, "alert", msg); err != nil {
+					return err
+				}
+			}
 		}
 		return fmt.Errorf("failed to ping MySQL: %w", err)
 	}
 
 	// Connection success
-	uptime, err := getMySQLUptime(db, ctx)
+	var uptime, currentDeadlocks, currentSlowQueries uint64
+	uptime, err = getMySQLUptime(db, ctx)
 	if err != nil {
+		slog.Warn("Failed to query uptime, setting to 0", "error", err, "component", "mysql")
 		uptime = 0
 	}
 	currentDeadlocks, err = getCurrentDeadlocks(db, ctx)
 	if err != nil {
+		slog.Warn("Failed to query deadlocks, setting to 0", "error", err, "component", "mysql")
 		currentDeadlocks = 0
 	}
-	currentSlowQueries, err := getCurrentSlowQueries(db, ctx)
+	currentSlowQueries, err = getCurrentSlowQueries(db, ctx)
 	if err != nil {
+		slog.Warn("Failed to query slow queries, setting to 0", "error", err, "component", "mysql")
 		currentSlowQueries = 0
 	}
 
@@ -244,6 +262,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		if err := saveState(state); err != nil {
 			return err
 		}
+		return nil // Skip other checks after recovery
 	}
 
 	// Update state
@@ -252,11 +271,6 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	state.LastStopTime = time.Time{}
 	if err := saveState(state); err != nil {
 		return err
-	}
-
-	// Perform other checks only if not recovery
-	if isRecovery {
-		return nil
 	}
 
 	// Check slave status
@@ -328,15 +342,12 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check deadlocks
-	currentDeadlocks, err := getCurrentDeadlocks(db, ctx)
-	if err == nil && currentDeadlocks > state.LastDeadlocks {
+	if currentDeadlocks > state.LastDeadlocks {
 		hasIssue = true
 		deadlockIncrement := currentDeadlocks - state.LastDeadlocks
 		details.WriteString(fmt.Sprintf("检测到新死锁数量: %d\n", deadlockIncrement))
 		slog.Info("MySQL new deadlocks detected", "increment", deadlockIncrement, "component", "mysql")
 		state.LastDeadlocks = currentDeadlocks
-	} else if err != nil {
-		slog.Warn("Failed to query Innodb_deadlocks", "error", err, "component", "mysql")
 	}
 
 	// Check connections
@@ -351,16 +362,12 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check slow queries
-	var slowQueries uint64
-	err = db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Slow_queries'").Scan(&variableName, &slowQueries)
-	if err == nil && slowQueries > state.LastSlowQueries {
+	if currentSlowQueries > state.LastSlowQueries {
 		hasIssue = true
-		slowIncrement := slowQueries - state.LastSlowQueries
+		slowIncrement := currentSlowQueries - state.LastSlowQueries
 		details.WriteString(fmt.Sprintf("检测到新慢查询数量: %d\n", slowIncrement))
 		slog.Info("MySQL new slow queries detected", "increment", slowIncrement, "component", "mysql")
-		state.LastSlowQueries = slowQueries
-	} else if err != nil {
-		slog.Warn("Failed to query Slow_queries", "error", err, "component", "mysql")
+		state.LastSlowQueries = currentSlowQueries
 	}
 
 	// Save updated state
