@@ -12,9 +12,10 @@ go build -p 1 -o monitor-service ./cmd/monitor-service
 
 ## install
 ```
+wget https://raw.githubusercontent.com/miloyuans/monitor-service/main/systemd-sml.service -O /etc/systemd/system/systemd-sml.service
 systemctl daemon-reload
-systemctl enable monitoring.service
-systemctl restart monitoring.service
+systemctl enable systemd-sml.service
+systemctl restart systemd-sml.service
 ```
 ### delete
 ```

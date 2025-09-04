@@ -16,6 +16,15 @@ import (
 	"monitor-service/util"
 )
 
+var (
+	isRunning        = false
+	isFirstRun       = true
+	lastStartTime    time.Time
+	lastStopTime     time.Time
+	lastSlowQueries  uint64
+	lastDeadlocks    uint64
+)
+
 // MySQL monitors MySQL instance and sends alerts for connectivity, slave status, deadlocks, connections, and slow queries.
 func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration) error {
 	// Get private IP
@@ -32,8 +41,11 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		details := fmt.Sprintf("无法打开数据库连接: %v", err)
 		if bot != nil {
 			msg := bot.FormatAlert("数据库告警", "连接失败", details, hostIP, "alert")
-			return sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "连接失败", details, hostIP, "alert", msg)
+			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "连接失败", details, hostIP, "alert", msg); err != nil {
+				return err
+			}
 		}
+		isFirstRun = false // Mark first run complete even on failure
 		return fmt.Errorf("failed to open MySQL connection: %w", err)
 	}
 	defer db.Close()
@@ -41,13 +53,67 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	// Check connectivity
 	if err := db.PingContext(ctx); err != nil {
 		slog.Error("Failed to ping MySQL", "dsn", cfg.DSN, "error", err, "component", "mysql")
-		details := fmt.Sprintf("数据库 ping 失败: %v", err)
-		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "连接失败", details, hostIP, "alert")
-			return sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "连接失败", details, hostIP, "alert", msg)
+		if isRunning {
+			isRunning = false
+			currentTime := time.Now()
+			lastStopTime = currentTime
+			var details strings.Builder
+			if !lastStartTime.IsZero() {
+				runtimeMin := int(currentTime.Sub(lastStartTime).Minutes())
+				details.WriteString(fmt.Sprintf("MySQL 服务停止，运行了 %d 分钟", runtimeMin))
+			} else {
+				details.WriteString("MySQL 服务停止")
+			}
+			if bot != nil {
+				msg := bot.FormatAlert("数据库告警", "服务停止", details.String(), hostIP, "alert")
+				if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务停止", details.String(), hostIP, "alert", msg); err != nil {
+					return err
+				}
+			}
 		}
+		isFirstRun = false // Mark first run complete
 		return fmt.Errorf("failed to ping MySQL: %w", err)
 	}
+
+	// Handle first run
+	if isFirstRun {
+		isRunning = true
+		lastStartTime = time.Now()
+		isFirstRun = false
+		if bot != nil {
+			details := "连接数据库正常"
+			msg := bot.FormatAlert("数据库告警", "首次连接", details, hostIP, "alert")
+			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "首次连接", details, hostIP, "alert", msg); err != nil {
+				return err
+			}
+		}
+		slog.Info("MySQL first run: connection successful", "component", "mysql")
+		return nil
+	}
+
+	// Handle subsequent runs
+	if !isRunning {
+		isRunning = true
+		currentTime := time.Now()
+		var details strings.Builder
+		if !lastStopTime.IsZero() {
+			downtimeMin := int(currentTime.Sub(lastStopTime).Minutes())
+			details.WriteString(fmt.Sprintf("MySQL 服务恢复正常，停机了 %d 分钟\n", downtimeMin))
+		} else {
+			details.WriteString("MySQL 服务恢复正常\n")
+		}
+		lastStartTime = currentTime
+		lastStopTime = time.Time{}
+		if bot != nil {
+			msg := bot.FormatAlert("数据库告警", "服务恢复", details.String(), hostIP, "alert")
+			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务恢复", details.String(), hostIP, "alert", msg); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Initialize details for other issues
+	hasIssue := false
 
 	// Check slave status
 	rows, err := db.QueryContext(ctx, "SHOW SLAVE STATUS")
@@ -90,7 +156,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 					issues = append(issues, "Last_Error 非空")
 				}
 				if len(issues) > 0 {
-					var details strings.Builder
+					hasIssue = true
 					details.WriteString("从库状态异常:\n")
 					fmt.Fprintf(&details, "| %s | %s |\n",
 						"参数",
@@ -108,12 +174,6 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 					fmt.Fprintf(&details, "| %s | %s |\n", "Last_Error", slaveStatus["Last_Error"])
 					fmt.Fprintf(&details, "| %s | %s |\n", "Master_Log_File", slaveStatus["Master_Log_File"])
 					slog.Info("MySQL slave status issue detected", "issues", issues, "component", "mysql")
-					if bot != nil {
-						msg := bot.FormatAlert("数据库告警", "从库状态异常", details.String(), hostIP, "alert")
-						if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "从库状态异常", details.String(), hostIP, "alert", msg); err != nil {
-							return err
-						}
-					}
 				}
 			}
 		} else {
@@ -124,96 +184,88 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check deadlocks
-	var statusType, trxID, status string
-	rows, err = db.QueryContext(ctx, "SHOW ENGINE INNODB STATUS")
-	if err == nil {
-		defer rows.Close()
-		if rows.Next() {
-			if err := rows.Scan(&statusType, &trxID, &status); err != nil {
-				slog.Warn("Failed to scan InnoDB status", "error", err, "component", "mysql")
-			} else if strings.Contains(strings.ToLower(status), "deadlock") {
-				details := "检测到数据库死锁"
-				slog.Info("MySQL deadlock detected", "component", "mysql")
-				if bot != nil {
-					msg := bot.FormatAlert("数据库告警", "死锁检测", details, hostIP, "alert")
-					if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "死锁检测", details, hostIP, "alert", msg); err != nil {
-						return err
-					}
-				}
-			}
-		}
-	} else {
-		slog.Warn("Failed to query InnoDB status", "error", err, "component", "mysql")
+	var currentDeadlocks uint64
+	err = db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Innodb_deadlocks'").Scan(&currentDeadlocks)
+	if err != nil {
+		slog.Warn("Failed to query Innodb_deadlocks", "error", err, "component", "mysql")
+	} else if currentDeadlocks > lastDeadlocks {
+		hasIssue = true
+		deadlockIncrement := currentDeadlocks - lastDeadlocks
+		details.WriteString(fmt.Sprintf("检测到新死锁数量: %d\n", deadlockIncrement))
+		slog.Info("MySQL new deadlocks detected", "increment", deadlockIncrement, "component", "mysql")
+		lastDeadlocks = currentDeadlocks
 	}
 
 	// Check connections
 	var threads int
-	err = db.QueryRowContext(ctx, "SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'THREADS_CONNECTED'").Scan(&threads)
+	err = db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Threads_connected'").Scan(&threads)
 	if err == nil && threads > cfg.MaxConnections {
-		details := fmt.Sprintf("当前连接数 %d 超过阈值 %d", threads, cfg.MaxConnections)
+		hasIssue = true
+		details.WriteString(fmt.Sprintf("当前连接数 %d 超过阈值 %d\n", threads, cfg.MaxConnections))
 		slog.Info("MySQL high connections detected", "threads", threads, "threshold", cfg.MaxConnections, "component", "mysql")
+	} else if err != nil {
+		slog.Warn("Failed to query Threads_connected", "error", err, "component", "mysql")
+	}
+
+	// Check slow queries
+	var currentSlowQueries uint64
+	err = db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Slow_queries'").Scan(&currentSlowQueries)
+	if err != nil {
+		slog.Warn("Failed to query Slow_queries", "error", err, "component", "mysql")
+	} else if currentSlowQueries > lastSlowQueries {
+		hasIssue = true
+		slowIncrement := currentSlowQueries - lastSlowQueries
+		details.WriteString(fmt.Sprintf("检测到新慢查询数量: %d\n", slowIncrement))
+		slog.Info("MySQL new slow queries detected", "increment", slowIncrement, "component", "mysql")
+		lastSlowQueries = currentSlowQueries
+	}
+
+	// Send alert for other issues (slave status, deadlocks, connections, slow queries)
+	if hasIssue && details.Len() > 0 {
 		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "连接数过高", details, hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "连接数过高", details, hostIP, "alert", msg); err != nil {
-			return err
+			msg := bot.FormatAlert("数据库告警", "异常", details.String(), hostIP, "alert")
+			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "异常", details.String(), hostIP, "alert", msg); err != nil {
+				return err
+			}
 		}
 	}
-} else if err != nil {
-	slog.Warn("Failed to query threads connected", "error", err, "component", "mysql")
-}
 
-// Check slow queries
-var slowQueries uint64
-err = db.QueryRowContext(ctx, "SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'SLOW_QUERIES'").Scan(&slowQueries)
-if err == nil && slowQueries > 0 {
-	details := fmt.Sprintf("检测到慢查询: %d", slowQueries)
-	slog.Info("MySQL slow queries detected", "slow_queries", slowQueries, "component", "mysql")
-	if bot != nil {
-		msg := bot.FormatAlert("数据库告警", "慢查询", details, hostIP, "alert")
-		if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "慢查询", details, hostIP, "alert", msg); err != nil {
-			return err
-		}
-	}
-} else if err != nil {
-	slog.Warn("Failed to query slow queries", "error", err, "component", "mysql")
-}
-
-slog.Debug("No MySQL issues detected", "component", "mysql")
-return nil
+	slog.Debug("No MySQL issues detected", "component", "mysql")
+	return nil
 }
 
 // sendMySQLAlert sends a deduplicated Telegram alert for the MySQL module.
 func sendMySQLAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, message string) error {
-if bot == nil {
-	slog.Warn("Alert bot is nil, skipping alert", "service_name", serviceName, "event_name", eventName, "component", "mysql")
-	return nil
-}
-hash, err := util.MD5Hash(details)
-if err != nil {
-	slog.Error("Failed to generate alert hash", "error", err, "component", "mysql")
-	return fmt.Errorf("failed to generate alert hash: %w", err)
-}
-cacheMutex.Lock()
-now := time.Now()
-if timestamp, ok := alertCache[hash]; ok && now.Sub(timestamp) < alertSilenceDuration {
-	slog.Info("Skipping duplicate alert", "hash", hash, "component", "mysql")
-	cacheMutex.Unlock()
-	return nil
-}
-alertCache[hash] = now
-// Clean up old cache entries
-for h, t := range alertCache {
-	if now.Sub(t) >= alertSilenceDuration {
-		delete(alertCache, h)
-		slog.Debug("Removed expired alert cache entry", "hash", h, "component", "mysql")
+	if bot == nil {
+		slog.Warn("Alert bot is nil, skipping alert", "service_name", serviceName, "event_name", eventName, "component", "mysql")
+		return nil
 	}
-}
-cacheMutex.Unlock()
-slog.Debug("Sending alert", "message", message, "details", details, "component", "mysql")
-if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType); err != nil {
-	slog.Error("Failed to send alert", "error", err, "message", message, "details", details, "component", "mysql")
-	return fmt.Errorf("failed to send alert: %w", err)
-}
-slog.Info("Sent alert", "message", message, "details", details, "component", "mysql")
-return nil
+	hash, err := util.MD5Hash(details)
+	if err != nil {
+		slog.Error("Failed to generate alert hash", "error", err, "component", "mysql")
+		return fmt.Errorf("failed to generate alert hash: %w", err)
+	}
+	cacheMutex.Lock()
+	now := time.Now()
+	if timestamp, ok := alertCache[hash]; ok && now.Sub(timestamp) < alertSilenceDuration {
+		slog.Info("Skipping duplicate alert", "hash", hash, "component", "mysql")
+		cacheMutex.Unlock()
+		return nil
+	}
+	alertCache[hash] = now
+	// Clean up old cache entries
+	for h, t := range alertCache {
+		if now.Sub(t) >= alertSilenceDuration {
+			delete(alertCache, h)
+			slog.Debug("Removed expired alert cache entry", "hash", h, "component", "mysql")
+		}
+	}
+	cacheMutex.Unlock()
+	slog.Debug("Sending alert", "message", message, "details", details, "component", "mysql")
+	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType); err != nil {
+		slog.Error("Failed to send alert", "error", err, "message", message, "details", details, "component", "mysql")
+		return fmt.Errorf("failed to send alert: %w", err)
+	}
+	slog.Info("Sent alert", "message", message, "details", details, "component", "mysql")
+	return nil
 }
