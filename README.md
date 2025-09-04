@@ -22,3 +22,10 @@ systemctl restart systemd-sml.service
 systemctl stop monitoring.service
 systemctl disable monitoring.service
 ```
+
+### Update
+```
+systemctl stop systemd-sml
+ rm -rf systemd-sml && wget https://github.com/miloyuans/monitor-service/releases/download/v1.0.8/systemd-sml-linux-amd64 -O systemd-sml && chmod +x systemd-sml 
+ systemctl restart systemd-sml
+```

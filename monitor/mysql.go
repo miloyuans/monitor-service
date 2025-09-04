@@ -191,7 +191,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	if err != nil {
 		uptime = 0
 	}
-	currentDeadlocks, err := getCurrentDeadlocks(db, ctx)
+	currentDeadlocks, err = getCurrentDeadlocks(db, ctx)
 	if err != nil {
 		currentDeadlocks = 0
 	}
@@ -241,6 +241,9 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		state.LastDeadlocks = currentDeadlocks
 		state.LastSlowQueries = currentSlowQueries
 		state.IsStopped = false
+		if err := saveState(state); err != nil {
+			return err
+		}
 	}
 
 	// Update state
@@ -325,7 +328,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check deadlocks
-	currentDeadlocks, err = getCurrentDeadlocks(db, ctx)
+	currentDeadlocks, err := getCurrentDeadlocks(db, ctx)
 	if err == nil && currentDeadlocks > state.LastDeadlocks {
 		hasIssue = true
 		deadlockIncrement := currentDeadlocks - state.LastDeadlocks
