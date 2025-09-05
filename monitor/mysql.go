@@ -125,7 +125,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	db, err := sql.Open("mysql", cfg.DSN)
 	if err != nil {
 		slog.Error("Failed to open MySQL connection", "dsn", cfg.DSN, "error", err, "component", "mysql")
-		details.WriteString(fmt.Sprintf("无法打开数据库连接: %v", err))
+		details.WriteString(fmt.Sprintf("监控启动，但数据库连接失败: %v", err))
 		if fileExisted && !state.IsStopped {
 			// Calculate runtime
 			var runtimeMin int
@@ -165,7 +165,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	currentTime := time.Now()
 	if err := db.PingContext(ctx); err != nil {
 		slog.Error("Failed to ping MySQL", "dsn", cfg.DSN, "error", err, "component", "mysql")
-		details.WriteString(fmt.Sprintf("数据库 ping 失败: %v", err))
+		details.WriteString(fmt.Sprintf("监控启动，但数据库连接失败: %v", err))
 		if fileExisted && !state.IsStopped {
 			// Calculate runtime
 			var runtimeMin int
@@ -217,16 +217,10 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		slog.Warn("Failed to query slow queries, setting to 0", "error", err, "component", "mysql")
 		currentSlowQueries = 0
 	}
+	slog.Debug("MySQL connection successful", "component", "mysql")
 
 	if state == nil {
 		// First run
-		details.WriteString("连接数据库正常")
-		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "首次连接", details.String(), hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "首次连接", details.String(), hostIP, "alert", msg); err != nil {
-				return err
-			}
-		}
 		state = &MySQLState{
 			InitTime:        currentTime,
 			LastUptime:      uptime,
@@ -240,12 +234,8 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 			return err
 		}
 		slog.Info("MySQL first run: connection successful", "component", "mysql")
-		return nil // Skip other checks
-	}
-
-	// Not first run
-	isRecovery := state.IsStopped
-	if isRecovery {
+	} else if state.IsStopped {
+		// Recovery
 		downtimeMin := int(currentTime.Sub(state.LastStopTime).Minutes())
 		details.WriteString(fmt.Sprintf("MySQL 服务恢复正常，停机了 %d 分钟", downtimeMin))
 		hasIssue = true
