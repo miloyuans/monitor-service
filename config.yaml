@@ -26,6 +26,8 @@ mysql:
   enabled: false
   dsn: "root:password@tcp(localhost:3306)/mysql"
   cluster_name: "mysql-cluster"
+  deadlock_threshold: 10
+  slow_query_threshold: 30
   max_connections: 100
 nacos:
   enabled: false

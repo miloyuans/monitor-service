@@ -290,10 +290,8 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 					slog.Warn("Failed to parse Last_Errno", "value", errNoStr, "error", parseErr, "component", "mysql")
 					errNo = -1 // Invalid, treat as issue
 				}
-				if errNo != 0 {
+				if errNo != 0 && lastError != "" {
 					issues = append(issues, fmt.Sprintf("Last_Errno: %d", errNo))
-				}
-				if lastError != "" {
 					issues = append(issues, fmt.Sprintf("Last_Error: %s", lastError))
 				}
 				if len(issues) > 0 {
@@ -351,6 +349,34 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 			hasIssue = true
 			details.WriteString(fmt.Sprintf("检测到新慢查询数量: %d (超过阈值 %d)\n", slowIncrement, cfg.SlowQueryThreshold))
 			slog.Info("MySQL new slow queries detected exceeding threshold", "increment", slowIncrement, "threshold", cfg.SlowQueryThreshold, "component", "mysql")
+
+			// Query top 5 slowest recent queries
+			slowLogRows, err := db.QueryContext(ctx, `
+				SELECT sql_text, TIME_TO_SEC(query_time) + MICROSECOND(query_time)/1000000.0 AS query_seconds
+				FROM mysql.slow_log
+				WHERE start_time >= ?
+				ORDER BY query_time DESC
+				LIMIT 5`, state.LastCheckTime)
+			if err != nil {
+				slog.Warn("Failed to query slow_log", "error", err, "component", "mysql")
+			} else {
+				defer slowLogRows.Close()
+				details.WriteString("最耗时的5个慢SQL:\n")
+				for slowLogRows.Next() {
+					var sqlText string
+					var querySeconds float64
+					if err := slowLogRows.Scan(&sqlText, &querySeconds); err == nil {
+						firstChar := ""
+						if len(sqlText) > 0 {
+							firstChar = string(sqlText[0])
+						}
+						details.WriteString(fmt.Sprintf("%s + %.2f seconds\n", firstChar, querySeconds))
+					}
+				}
+				if err := slowLogRows.Err(); err != nil {
+					slog.Warn("Error iterating slow_log rows", "error", err, "component", "mysql")
+				}
+			}
 		} else {
 			slog.Info("MySQL new slow queries detected but below threshold", "increment", slowIncrement, "threshold", cfg.SlowQueryThreshold, "component", "mysql")
 		}
