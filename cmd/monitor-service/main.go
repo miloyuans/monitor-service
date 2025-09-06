@@ -35,23 +35,38 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Parse retry delay
+	retryDelay, err := time.ParseDuration(cfg.RetryDelay)
+	if err != nil {
+		slog.Error("Invalid retry delay", "retry_delay", cfg.RetryDelay, "error", err, "component", "main")
+		os.Exit(1)
+	}
+
 	// Initialize global alert bot
 	var globalBot *alert.AlertBot
-	if cfg.IsAnyMonitoringEnabled() && cfg.Telegram.BotToken != "" && cfg.Telegram.ChatID != 0 {
-		globalBot, err = alert.NewAlertBot(cfg.Telegram.BotToken, cfg.Telegram.ChatID, cfg.ClusterName, cfg.ShowHostname)
+	if cfg.IsAnyMonitoringEnabled() && (cfg.Telegram.BotToken != "" && cfg.Telegram.ChatID != 0 || cfg.MonitorWebURL != "") {
+		globalBot, err = alert.NewAlertBot(cfg.Telegram.BotToken, cfg.Telegram.ChatID, cfg.ClusterName, cfg.ShowHostname, cfg.MonitorWebURL, cfg.RetryTimes, retryDelay)
 		if err != nil {
 			slog.Error("Failed to initialize global alert bot", "error", err, "component", "main")
 			os.Exit(1)
+		}
+		// Retry unsent alerts
+		if err := globalBot.loadAndRetryUnsentAlerts(context.Background()); err != nil {
+			slog.Error("Failed to retry unsent alerts for global bot", "error", err, "component", "main")
 		}
 	}
 
 	// Initialize MySQL-specific alert bot
 	var mysqlBot *alert.AlertBot
 	if cfg.MySQL.Enabled && cfg.MySQL.HasIndependentTelegramConfig() {
-		mysqlBot, err = alert.NewAlertBot(cfg.MySQL.Telegram.BotToken, cfg.MySQL.Telegram.ChatID, cfg.MySQL.ClusterName, cfg.ShowHostname)
+		mysqlBot, err = alert.NewAlertBot(cfg.MySQL.Telegram.BotToken, cfg.MySQL.Telegram.ChatID, cfg.MySQL.ClusterName, cfg.ShowHostname, cfg.MonitorWebURL, cfg.RetryTimes, retryDelay)
 		if err != nil {
 			slog.Error("Failed to initialize MySQL alert bot", "error", err, "component", "main")
 			os.Exit(1)
+		}
+		// Retry unsent alerts
+		if err := mysqlBot.loadAndRetryUnsentAlerts(context.Background()); err != nil {
+			slog.Error("Failed to retry unsent alerts for MySQL bot", "error", err, "component", "main")
 		}
 	}
 
@@ -71,7 +86,6 @@ func main() {
 
 	// Send startup alerts
 	if cfg.IsAnyMonitoringEnabled() && globalBot != nil {
-		// Only include modules without independent Telegram configurations in global startup alert
 		var details strings.Builder
 		details.WriteString("✅监控服务已启动✅\n启用模块:\n")
 		enabledModules := []string{}
@@ -103,7 +117,7 @@ func main() {
 			details.WriteString("MySQL 使用独立 Telegram 通知\n")
 		}
 		startupMsg := globalBot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "启动", details.String(), hostIP, "startup")
-		if err := globalBot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "启动", details.String(), hostIP, "startup"); err != nil {
+		if err := globalBot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "启动", details.String(), hostIP, "startup", "general", nil); err != nil {
 			slog.Error("Failed to send global startup alert", "error", err, "message", startupMsg, "component", "main")
 		} else {
 			slog.Info("Sent global startup alert", "message", startupMsg, "component", "main")
@@ -113,7 +127,7 @@ func main() {
 	// Send MySQL-specific startup alert if independent configuration is used
 	if cfg.MySQL.Enabled && mysqlBot != nil {
 		startupMsg := mysqlBot.FormatAlert("数据库监控", "启动", "MySQL 监控服务已启动", hostIP, "startup")
-		if err := mysqlBot.SendAlert(ctx, "数据库监控", "启动", "MySQL 监控服务已启动", hostIP, "startup"); err != nil {
+		if err := mysqlBot.SendAlert(ctx, "数据库监控", "启动", "MySQL 监控服务已启动", hostIP, "startup", "mysql", nil); err != nil {
 			slog.Error("Failed to send MySQL startup alert", "error", err, "message", startupMsg, "component", "main")
 		} else {
 			slog.Info("Sent MySQL startup alert", "message", startupMsg, "component", "main")
@@ -129,7 +143,7 @@ func main() {
 		slog.Error("Invalid check interval", "interval", cfg.CheckInterval, "error", err, "component", "main")
 		if globalBot != nil {
 			startupMsg := globalBot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert")
-			if err := globalBot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert"); err != nil {
+			if err := globalBot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert", "general", nil); err != nil {
 				slog.Error("Failed to send alert for invalid check interval", "error", err, "message", startupMsg, "component", "main")
 			}
 		}
@@ -176,7 +190,7 @@ func main() {
 				details.WriteString("MySQL 使用独立 Telegram 通知\n")
 			}
 			shutdownMsg := globalBot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "停止", details.String(), hostIP, "shutdown")
-			if err := globalBot.SendAlert(context.Background(), fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "停止", details.String(), hostIP, "shutdown"); err != nil {
+			if err := globalBot.SendAlert(context.Background(), fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "停止", details.String(), hostIP, "shutdown", "general", nil); err != nil {
 				slog.Error("Failed to send global shutdown alert", "error", err, "message", shutdownMsg, "component", "main")
 			} else {
 				slog.Info("Sent global shutdown alert", "message", shutdownMsg, "component", "main")
@@ -184,7 +198,7 @@ func main() {
 		}
 		if cfg.MySQL.Enabled && mysqlBot != nil {
 			shutdownMsg := mysqlBot.FormatAlert("数据库监控", "停止", "MySQL 监控服务已停止", hostIP, "shutdown")
-			if err := mysqlBot.SendAlert(context.Background(), "数据库监控", "停止", "MySQL 监控服务已停止", hostIP, "shutdown"); err != nil {
+			if err := mysqlBot.SendAlert(context.Background(), "数据库监控", "停止", "MySQL 监控服务已停止", hostIP, "shutdown", "mysql", nil); err != nil {
 				slog.Error("Failed to send MySQL shutdown alert", "error", err, "message", shutdownMsg, "component", "main")
 			} else {
 				slog.Info("Sent MySQL shutdown alert", "message", shutdownMsg, "component", "main")
@@ -256,7 +270,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
 				return monitor.General(ctx, cfg.(config.GeneralConfig), bot, cache, mutex, duration)
 			},
-			cfg:     cfg.Monitoring,
+			cfg: cfg.Monitoring,
 		},
 		{
 			name:    "RabbitMQ",
@@ -265,7 +279,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
 				return monitor.RabbitMQ(ctx, cfg.(config.RabbitMQConfig), bot, cache, mutex, duration)
 			},
-			cfg:     cfg.RabbitMQ,
+			cfg: cfg.RabbitMQ,
 		},
 		{
 			name:    "Redis",
@@ -274,7 +288,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
 				return monitor.Redis(ctx, cfg.(config.RedisConfig), bot, cache, mutex, duration)
 			},
-			cfg:     cfg.Redis,
+			cfg: cfg.Redis,
 		},
 		{
 			name:    "MySQL",
@@ -283,7 +297,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
 				return monitor.MySQL(ctx, cfg.(config.MySQLConfig), bot, cache, mutex, duration)
 			},
-			cfg:     cfg.MySQL,
+			cfg: cfg.MySQL,
 		},
 		{
 			name:    "Nacos",
@@ -292,7 +306,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
 				return monitor.Nacos(ctx, cfg.(config.NacosConfig), bot, cache, mutex, duration)
 			},
-			cfg:     cfg.Nacos,
+			cfg: cfg.Nacos,
 		},
 		{
 			name:    "Host",
@@ -301,7 +315,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
 				return monitor.Host(ctx, cfg.(config.HostConfig), bot, cache, mutex, duration)
 			},
-			cfg:     cfg.HostMonitoring,
+			cfg: cfg.HostMonitoring,
 		},
 		{
 			name:    "System",
@@ -310,7 +324,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			fn:      func(ctx context.Context, cfg interface{}, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
 				return monitor.System(ctx, cfg.(config.SystemConfig), bot, cache, mutex, duration)
 			},
-			cfg:     cfg.SystemMonitoring,
+			cfg: cfg.SystemMonitoring,
 		},
 	}
 

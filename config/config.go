@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/spf13/viper"
@@ -22,6 +23,9 @@ type Config struct {
 	ShowHostname         bool             `mapstructure:"show_hostname"`
 	AlertSilenceDuration int              `mapstructure:"alert_silence_duration"`
 	CheckInterval        string           `mapstructure:"check_interval"`
+	MonitorWebURL        string           `mapstructure:"monitor_web_url"` // New: monitor-web API endpoint
+	RetryTimes           int              `mapstructure:"retry_times"`     // New: retry times for sending alerts
+	RetryDelay           string           `mapstructure:"retry_delay"`     // New: retry delay (e.g., "5s")
 }
 
 // GeneralConfig holds general monitoring settings.
@@ -57,14 +61,14 @@ type RedisConfig struct {
 
 // MySQLConfig holds MySQL-specific configuration.
 type MySQLConfig struct {
-	Enabled             	bool          `mapstructure:"enabled"`
-	DSN                 	string        `mapstructure:"dsn"`
-	ClusterName         	string        `mapstructure:"cluster_name"`
-	MaxConnections      	int           `mapstructure:"max_connections"`
-	DeadlockThreshold   	int64         `mapstructure:"deadlock_threshold"`
-	SlowQueryThreshold  	int64         `mapstructure:"slow_query_threshold"`
-	SecondsBehindThreshold	int64		  `mapstructure:"seconds_behind_threshold"`
-	Telegram            	TelegramConfig `mapstructure:"telegram"`
+	Enabled                bool           `mapstructure:"enabled"`
+	DSN                    string         `mapstructure:"dsn"`
+	ClusterName            string         `mapstructure:"cluster_name"`
+	MaxConnections         int            `mapstructure:"max_connections"`
+	DeadlockThreshold      int64          `mapstructure:"deadlock_threshold"`
+	SlowQueryThreshold     int64          `mapstructure:"slow_query_threshold"`
+	SecondsBehindThreshold int64          `mapstructure:"seconds_behind_threshold"`
+	Telegram               TelegramConfig `mapstructure:"telegram"`
 }
 
 // NacosConfig holds Nacos-specific configuration.
@@ -113,11 +117,11 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("mysql.dsn", "root:password@tcp(localhost:3306)/mysql")
 	viper.SetDefault("mysql.cluster_name", "mysql-cluster")
 	viper.SetDefault("mysql.max_connections", 100)
-	viper.SetDefault("mysql.telegram.bot_token", "")
-	viper.SetDefault("mysql.telegram.chat_id", 0)
 	viper.SetDefault("mysql.deadlock_threshold", 1)
 	viper.SetDefault("mysql.slow_query_threshold", 1)
 	viper.SetDefault("mysql.seconds_behind_threshold", 1)
+	viper.SetDefault("mysql.telegram.bot_token", "")
+	viper.SetDefault("mysql.telegram.chat_id", 0)
 	viper.SetDefault("nacos.enabled", false)
 	viper.SetDefault("nacos.address", "http://localhost:8848")
 	viper.SetDefault("nacos.cluster_name", "nacos-cluster")
@@ -134,6 +138,9 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("show_hostname", false)
 	viper.SetDefault("alert_silence_duration", 5) // minutes
 	viper.SetDefault("check_interval", "30s")
+	viper.SetDefault("monitor_web_url", "")       // New default
+	viper.SetDefault("retry_times", 3)            // New default
+	viper.SetDefault("retry_delay", "5s")         // New default
 
 	var cfg Config
 	viper.SetConfigFile(path)
@@ -189,6 +196,19 @@ func (c Config) Validate() error {
 		return fmt.Errorf("alert_silence_duration must be positive")
 	}
 
+	// New: Validate monitor-web related configs
+	if c.MonitorWebURL != "" {
+		if c.RetryTimes <= 0 {
+			return fmt.Errorf("retry_times must be positive when monitor_web_url is set")
+		}
+		if c.RetryDelay == "" {
+			return fmt.Errorf("retry_delay is required when monitor_web_url is set")
+		}
+		if _, err := time.ParseDuration(c.RetryDelay); err != nil {
+			return fmt.Errorf("invalid retry_delay format: %w", err)
+		}
+	}
+
 	// Validate RabbitMQ configuration
 	if c.RabbitMQ.Enabled {
 		if c.RabbitMQ.URL == "" {
@@ -235,7 +255,6 @@ func (c Config) Validate() error {
 		if c.MySQL.MaxConnections <= 0 {
 			return fmt.Errorf("mysql.max_connections must be positive")
 		}
-		// ... existing
 		if c.MySQL.DeadlockThreshold <= 0 {
 			return fmt.Errorf("mysql.deadlock_threshold must be non-negative")
 		}
