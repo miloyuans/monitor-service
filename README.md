@@ -23,9 +23,16 @@ systemctl stop monitoring.service
 systemctl disable monitoring.service
 ```
 
-### Update
+### Update x86 amd64
 ```
 systemctl stop systemd-sml
- rm -rf systemd-sml && wget https://github.com/miloyuans/monitor-service/releases/download/v1.0.8/systemd-sml-linux-amd64 -O systemd-sml && chmod +x systemd-sml 
+ rm -rf systemd-sml && wget https://github.com/miloyuans/monitor-service/releases/download/v1.1.0/systemd-sml-linux-amd64 -O systemd-sml && chmod +x systemd-sml
+ systemctl restart systemd-sml
+```
+
+### Update x86 arm64
+```
+systemctl stop systemd-sml
+ rm -rf systemd-sml && wget https://github.com/miloyuans/monitor-service/releases/download/v1.1.0/systemd-sml-linux-arm64 -O systemd-sml && chmod +x systemd-sml
  systemctl restart systemd-sml
 ```

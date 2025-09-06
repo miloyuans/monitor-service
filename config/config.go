@@ -57,11 +57,13 @@ type RedisConfig struct {
 
 // MySQLConfig holds MySQL-specific configuration.
 type MySQLConfig struct {
-	Enabled        bool          `mapstructure:"enabled"`
-	DSN            string        `mapstructure:"dsn"`
-	ClusterName    string        `mapstructure:"cluster_name"`
-	MaxConnections int           `mapstructure:"max_connections"`
-	Telegram       TelegramConfig `mapstructure:"telegram"`
+	Enabled             bool          `mapstructure:"enabled"`
+	DSN                 string        `mapstructure:"dsn"`
+	ClusterName         string        `mapstructure:"cluster_name"`
+	MaxConnections      int           `mapstructure:"max_connections"`
+	DeadlockThreshold   int64         `mapstructure:"deadlock_threshold"`
+	SlowQueryThreshold  int64         `mapstructure:"slow_query_threshold"`
+	Telegram            TelegramConfig `mapstructure:"telegram"`
 }
 
 // NacosConfig holds Nacos-specific configuration.
@@ -112,6 +114,8 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("mysql.max_connections", 100)
 	viper.SetDefault("mysql.telegram.bot_token", "")
 	viper.SetDefault("mysql.telegram.chat_id", 0)
+	viper.SetDefault("mysql.deadlock_threshold", 10)
+	viper.SetDefault("mysql.slow_query_threshold", 10)
 	viper.SetDefault("nacos.enabled", false)
 	viper.SetDefault("nacos.address", "http://localhost:8848")
 	viper.SetDefault("nacos.cluster_name", "nacos-cluster")
@@ -228,6 +232,13 @@ func (c Config) Validate() error {
 		}
 		if c.MySQL.MaxConnections <= 0 {
 			return fmt.Errorf("mysql.max_connections must be positive")
+		}
+		// ... existing
+		if c.MySQL.DeadlockThreshold < 0 {
+			return fmt.Errorf("mysql.deadlock_threshold must be non-negative")
+		}
+		if c.MySQL.SlowQueryThreshold < 0 {
+			return fmt.Errorf("mysql.slow_query_threshold must be non-negative")
 		}
 		// Validate MySQL Telegram configuration if provided
 		if c.MySQL.HasIndependentTelegramConfig() {

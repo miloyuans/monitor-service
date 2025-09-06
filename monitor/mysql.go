@@ -100,6 +100,78 @@ func getCurrentSlowQueries(db *sql.DB, ctx context.Context) (uint64, error) {
 	return slowQueries, nil
 }
 
+// ... (in MySQL function, after getting currentDeadlocks)
+if currentDeadlocks > state.LastDeadlocks {
+	deadlockIncrement := currentDeadlocks - state.LastDeadlocks
+	if deadlockIncrement > int64(cfg.DeadlockThreshold) {
+		hasIssue = true
+		details.WriteString(fmt.Sprintf("检测到新死锁数量: %d (超过阈值 %d)\n", deadlockIncrement, cfg.DeadlockThreshold))
+		slog.Info("MySQL new deadlocks detected exceeding threshold", "increment", deadlockIncrement, "threshold", cfg.DeadlockThreshold, "component", "mysql")
+	} else {
+		slog.Info("MySQL new deadlocks detected but below threshold", "increment", deadlockIncrement, "threshold", cfg.DeadlockThreshold, "component", "mysql")
+	}
+	state.LastDeadlocks = currentDeadlocks
+}
+
+// ... (similar for slow queries)
+if currentSlowQueries > state.LastSlowQueries {
+	slowIncrement := currentSlowQueries - state.LastSlowQueries
+	if slowIncrement > int64(cfg.SlowQueryThreshold) {
+		hasIssue = true
+		details.WriteString(fmt.Sprintf("检测到新慢查询数量: %d (超过阈值 %d)\n", slowIncrement, cfg.SlowQueryThreshold))
+		slog.Info("MySQL new slow queries detected exceeding threshold", "increment", slowIncrement, "threshold", cfg.SlowQueryThreshold, "component", "mysql")
+	} else {
+		slog.Info("MySQL new slow queries detected but below threshold", "increment", slowIncrement, "threshold", cfg.SlowQueryThreshold, "component", "mysql")
+	}
+	state.LastSlowQueries = currentSlowQueries
+}
+
+// ... (in slave status check)
+if len(slaveStatus) > 0 {
+	issues := []string{}
+	// ... existing checks for Slave_IO_Running, etc.
+	errNoStr := slaveStatus["Last_Errno"]
+	lastError := slaveStatus["Last_Error"]
+	errNo, parseErr := strconv.Atoi(errNoStr)
+	if parseErr != nil {
+		slog.Warn("Failed to parse Last_Errno", "value", errNoStr, "error", parseErr, "component", "mysql")
+		errNo = -1 // Invalid, treat as issue
+	}
+	if errNo != 0 || lastError != "" {
+		if errNo != 0 {
+			issues = append(issues, fmt.Sprintf("Last_Errno: %d", errNo))
+		}
+		if lastError != "" {
+			issues = append(issues, fmt.Sprintf("Last_Error: %s", lastError))
+		}
+	} else {
+		// No error, log to file instead of alerting
+		logToFile(fmt.Sprintf("Slave status normal: Last_Errno=0, Last_Error='', Timestamp=%s", time.Now().Format(time.RFC3339)))
+	}
+	if len(issues) > 0 {
+		hasIssue = true
+		details.WriteString("从库状态异常:\n")
+		// ... existing table
+		slog.Info("MySQL slave status issue detected", "issues", issues, "component", "mysql")
+	}
+}
+
+// Helper function to log to local file
+func logToFile(message string) {
+	filePath := ".mysql_slave_log"
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		slog.Error("Failed to open slave log file", "error", err, "component", "mysql")
+		return
+	}
+	defer f.Close()
+	if _, err := f.WriteString(message + "\n"); err != nil {
+		slog.Error("Failed to write to slave log file", "error", err, "component", "mysql")
+	} else {
+		slog.Debug("Logged slave status to file", "message", message, "component", "mysql")
+	}
+}
+
 // MySQL monitors MySQL instance and sends alerts for connectivity, slave status, deadlocks, connections, and slow queries.
 func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration) error {
 	// Get private IP
