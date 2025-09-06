@@ -112,7 +112,7 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 	// Escape all fields for MarkdownV2 to prevent parsing errors
 	header = EscapeMarkdown(header)
 	timestamp = EscapeMarkdown(timestamp)
-	clusterName = EscapeMarkdown(a.ClusterName)
+	clusterName := EscapeMarkdown(a.ClusterName) // Correct: Use a.ClusterName
 	hostname = EscapeMarkdown(hostname)
 	hostIP = EscapeMarkdown(hostIP)
 	serviceName = EscapeMarkdown(serviceName)
@@ -182,7 +182,7 @@ func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, detail
 			Details:     details,
 			HostIP:      hostIP,
 			AlertType:   alertType,
-			ClusterName: a.ClusterName,
+			ClusterName: a.ClusterName, // Correct: Use a.ClusterName
 			Hostname:    a.Hostname,
 		}
 
