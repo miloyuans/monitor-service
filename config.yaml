@@ -1,6 +1,10 @@
 cluster_name: "default-cluster"
 show_hostname: false
 check_interval: "30s"
+#
+monitor_web_url: "http://192.168.3.92:8080/api/alerts"
+retry_times: 3
+retry_delay: "5s"
 # minutes
 alert_silence_duration: 5
 telegram:
