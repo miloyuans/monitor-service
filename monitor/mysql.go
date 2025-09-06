@@ -280,8 +280,13 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 				if slaveStatus["Slave_SQL_Running"] != "Yes" {
 					issues = append(issues, "Slave_SQL_Running 异常")
 				}
-				if seconds, err := strconv.ParseInt(slaveStatus["Seconds_Behind_Master"], 10, 64); err == nil && seconds > 0 {
-					issues = append(issues, "Seconds_Behind_Master 非零")
+				if secondsStr := slaveStatus["Seconds_Behind_Master"]; secondsStr != "" {
+					if seconds, err := strconv.ParseInt(secondsStr, 10, 64); err == nil && seconds > int64(cfg.SecondsBehindThreshold) {
+						issues = append(issues, fmt.Sprintf("Seconds_Behind_Master: %d (超过阈值 %d)", seconds, cfg.SecondsBehindThreshold))
+					} else if err != nil {
+						slog.Warn("Failed to parse Seconds_Behind_Master", "value", secondsStr, "error", err, "component", "mysql")
+						issues = append(issues, fmt.Sprintf("Seconds_Behind_Master: 无效值 %s", secondsStr))
+					}
 				}
 				errNoStr := slaveStatus["Last_Errno"]
 				lastError := slaveStatus["Last_Error"]

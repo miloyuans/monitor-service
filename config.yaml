@@ -29,6 +29,7 @@ mysql:
   deadlock_threshold: 10
   slow_query_threshold: 30
   max_connections: 100
+  seconds_behind_threshold: 5
 nacos:
   enabled: false
   address: "http://localhost:8848"
