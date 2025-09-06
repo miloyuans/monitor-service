@@ -115,9 +115,9 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("mysql.max_connections", 100)
 	viper.SetDefault("mysql.telegram.bot_token", "")
 	viper.SetDefault("mysql.telegram.chat_id", 0)
-	viper.SetDefault("mysql.deadlock_threshold", 0)
-	viper.SetDefault("mysql.slow_query_threshold", 0)
-	viper.SetDefault("mysql.seconds_behind_threshold", 0)
+	viper.SetDefault("mysql.deadlock_threshold", 1)
+	viper.SetDefault("mysql.slow_query_threshold", 1)
+	viper.SetDefault("mysql.seconds_behind_threshold", 1)
 	viper.SetDefault("nacos.enabled", false)
 	viper.SetDefault("nacos.address", "http://localhost:8848")
 	viper.SetDefault("nacos.cluster_name", "nacos-cluster")
@@ -236,11 +236,14 @@ func (c Config) Validate() error {
 			return fmt.Errorf("mysql.max_connections must be positive")
 		}
 		// ... existing
-		if c.MySQL.DeadlockThreshold < 0 {
+		if c.MySQL.DeadlockThreshold <= 0 {
 			return fmt.Errorf("mysql.deadlock_threshold must be non-negative")
 		}
-		if c.MySQL.SlowQueryThreshold < 0 {
+		if c.MySQL.SlowQueryThreshold <= 0 {
 			return fmt.Errorf("mysql.slow_query_threshold must be non-negative")
+		}
+		if c.MySQL.SecondsBehindThreshold <= 0 {
+			return fmt.Errorf("mysql.seconds_behind_threshold must be non-negative")
 		}
 		// Validate MySQL Telegram configuration if provided
 		if c.MySQL.HasIndependentTelegramConfig() {
