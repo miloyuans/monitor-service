@@ -355,7 +355,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 			details.WriteString(fmt.Sprintf("检测到新慢查询数量: %d (超过阈值 %d)\n", slowIncrement, cfg.SlowQueryThreshold))
 			slog.Info("MySQL new slow queries detected exceeding threshold", "increment", slowIncrement, "threshold", cfg.SlowQueryThreshold, "component", "mysql")
 
-			// Query top 5 slowest recent queries
+			// Query up to 5 slowest recent queries
 			slowLogRows, err := db.QueryContext(ctx, `
 				SELECT sql_text, TIME_TO_SEC(query_time) + MICROSECOND(query_time)/1000000.0 AS query_seconds
 				FROM mysql.slow_log
@@ -364,9 +364,10 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 				LIMIT 5`, state.LastCheckTime)
 			if err != nil {
 				slog.Warn("Failed to query slow_log", "error", err, "component", "mysql")
+				details.WriteString("无法查询慢查询日志: 错误\n")
 			} else {
 				defer slowLogRows.Close()
-				details.WriteString("最耗时的5个慢SQL:\n")
+				slowQueries := []string{}
 				for slowLogRows.Next() {
 					var sqlText string
 					var querySeconds float64
@@ -375,11 +376,20 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 						if len(sqlText) > 0 {
 							firstChar = string(sqlText[0])
 						}
-						details.WriteString(fmt.Sprintf("%s + %.2f seconds\n", firstChar, querySeconds))
+						slowQueries = append(slowQueries, fmt.Sprintf("%s + %.2f seconds", firstChar, querySeconds))
 					}
 				}
 				if err := slowLogRows.Err(); err != nil {
 					slog.Warn("Error iterating slow_log rows", "error", err, "component", "mysql")
+					details.WriteString("迭代慢查询日志时出错: 错误\n")
+				}
+				if len(slowQueries) > 0 {
+					details.WriteString(fmt.Sprintf("最耗时的%d个慢SQL:\n", len(slowQueries)))
+					for _, query := range slowQueries {
+						details.WriteString(fmt.Sprintf("%s\n", query))
+					}
+				} else {
+					details.WriteString("未找到慢查询记录\n")
 				}
 			}
 		} else {
