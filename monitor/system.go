@@ -186,7 +186,8 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	if hasIssue {
 		// Generate a unique alert key for this cycle to avoid reusing old cached content
 		alertKey := fmt.Sprintf("system_change_%s_%d", hostIP, time.Now().UnixNano())
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", "system", map[string]string{"alert_key": alertKey})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", "system", map[string]interface{}{"alert_key": alertKey})
+		//return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", "system", map[string]string{"alert_key": alertKey})
 	}
 
 	slog.Debug("No system issues detected", "component", "system")
