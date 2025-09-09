@@ -142,10 +142,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		slog.Error("Failed to open MySQL connection", "dsn", cfg.DSN, "error", err, "component", "mysql")
 		details.WriteString(fmt.Sprintf("监控启动，但数据库连接失败: %v", err))
 		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "监控启动异常", details.String(), hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", details.String(), hostIP, "alert", msg); err != nil {
-				return err
-			}
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 		}
 		return fmt.Errorf("failed to open MySQL connection: %w", err)
 	}
@@ -172,17 +169,11 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 				slog.Error("Failed to save state on stop", "error", err, "component", "mysql")
 			}
 			if bot != nil {
-				msg := bot.FormatAlert("数据库告警", "服务停止", details.String(), hostIP, "alert")
-				if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务停止", details.String(), hostIP, "alert", msg); err != nil {
-					return err
-				}
+				return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务停止", details.String(), hostIP, "alert", "", map[string]interface{}{})
 			}
 		}
 		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "监控启动异常", details.String(), hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", details.String(), hostIP, "alert", msg); err != nil {
-				return err
-			}
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 		}
 		return fmt.Errorf("failed to ping MySQL: %w", err)
 	}
@@ -227,100 +218,120 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		details.WriteString(fmt.Sprintf("MySQL 服务恢复正常，停机了 %d 分钟", downtimeMin))
 		hasIssue = true
 		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "服务恢复", details.String(), hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务恢复", details.String(), hostIP, "alert", msg); err != nil {
-				return err
-			}
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务恢复", details.String(), hostIP, "alert", "", map[string]interface{}{})
 		}
 		// Refresh initialization data on recovery
 		state.LastDeadlocks = currentDeadlocks
 		state.LastSlowQueries = currentSlowQueries
 		state.IsStopped = false
+		state.InitTime = currentTime
+		state.LastUptime = uptime
+		state.LastCheckTime = currentTime
+		state.LastStopTime = time.Time{}
+		if err := saveState(state); err != nil {
+			return err
+		}
+	} else if uptime < state.LastUptime {
+		// Restart detected
+		runtimeMin := int(state.LastUptime / 60)
+		details.WriteString(fmt.Sprintf("MySQL 服务重启，之前运行了 %d 分钟", runtimeMin))
+		hasIssue = true
+		if bot != nil {
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务重启", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		}
+		// Refresh initialization data on restart
+		state.InitTime = currentTime
+		state.LastDeadlocks = currentDeadlocks
+		state.LastSlowQueries = currentSlowQueries
+		if err := saveState(state); err != nil {
+			return err
+		}
+	} else {
+		state.LastUptime = uptime
+		state.LastCheckTime = currentTime
 		if err := saveState(state); err != nil {
 			return err
 		}
 	}
 
-	// Update state
-	state.LastUptime = uptime
-	state.LastCheckTime = currentTime
-	state.LastStopTime = time.Time{}
-	if err := saveState(state); err != nil {
-		return err
-	}
-
 	// Check slave status
-	rows, err := db.QueryContext(ctx, "SHOW SLAVE STATUS")
-	if err == nil {
-		defer rows.Close()
-		if rows.Next() {
-			columns, _ := rows.Columns()
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
-			for i := range values {
-				var v sql.RawBytes
-				valuePtrs[i] = &v
-				values[i] = &v
-			}
-			if err := rows.Scan(valuePtrs...); err != nil {
-				slog.Warn("Failed to scan slave status", "error", err, "component", "mysql")
-			} else {
-				slaveStatus := make(map[string]string)
-				for i, col := range columns {
-					if raw, ok := values[i].(*sql.RawBytes); ok {
-						slaveStatus[col] = string(*raw)
-					} else {
-						slaveStatus[col] = ""
-					}
-				}
-				issues := []string{}
-				if slaveStatus["Slave_IO_Running"] != "Yes" {
-					issues = append(issues, "Slave_IO_Running 异常")
-				}
-				if slaveStatus["Slave_SQL_Running"] != "Yes" {
-					issues = append(issues, "Slave_SQL_Running 异常")
-				}
-				if secondsStr := slaveStatus["Seconds_Behind_Master"]; secondsStr != "" {
-					if seconds, err := strconv.ParseInt(secondsStr, 10, 64); err == nil && seconds > int64(cfg.SecondsBehindThreshold) {
-						issues = append(issues, fmt.Sprintf("Seconds_Behind_Master: %d (超过阈值 %d)", seconds, cfg.SecondsBehindThreshold))
-					} else if err != nil {
-						slog.Warn("Failed to parse Seconds_Behind_Master", "value", secondsStr, "error", err, "component", "mysql")
-						issues = append(issues, fmt.Sprintf("Seconds_Behind_Master: 无效值 %s", secondsStr))
-					}
-				}
-				errNoStr := slaveStatus["Last_Errno"]
-				lastError := slaveStatus["Last_Error"]
-				errNo, parseErr := strconv.Atoi(errNoStr)
-				if parseErr != nil {
-					slog.Warn("Failed to parse Last_Errno", "value", errNoStr, "error", parseErr, "component", "mysql")
-					errNo = -1 // Invalid, treat as issue
-				}
-				if errNo != 0 && lastError != "" {
-					issues = append(issues, fmt.Sprintf("Last_Errno: %d", errNo))
-					issues = append(issues, fmt.Sprintf("Last_Error: %s", lastError))
-				}
-				if len(issues) > 0 {
-					hasIssue = true
-					details.WriteString("从库状态异常:\n")
-					fmt.Fprintf(&details, "| %s | %s |\n", "参数", "值")
-					fmt.Fprintf(&details, "|%s|%s|\n", "------", "------")
-					fmt.Fprintf(&details, "| %s | %s |\n", "Slave_IO_Running", slaveStatus["Slave_IO_Running"])
-					fmt.Fprintf(&details, "| %s | %s |\n", "Slave_SQL_Running", slaveStatus["Slave_SQL_Running"])
-					fmt.Fprintf(&details, "| %s | %s |\n", "Seconds_Behind_Master", slaveStatus["Seconds_Behind_Master"])
-					fmt.Fprintf(&details, "| %s | %s |\n", "Read_Master_Log_Pos", slaveStatus["Read_Master_Log_Pos"])
-					fmt.Fprintf(&details, "| %s | %s |\n", "Last_Errno", slaveStatus["Last_Errno"])
-					fmt.Fprintf(&details, "| %s | %s |\n", "Last_Error", slaveStatus["Last_Error"])
-					fmt.Fprintf(&details, "| %s | %s |\n", "Master_Log_File", slaveStatus["Master_Log_File"])
-					slog.Info("MySQL slave status issue detected", "issues", issues, "component", "mysql")
-				} else {
-					logToFile(fmt.Sprintf("Slave status normal: Last_Errno=0, Last_Error='', Timestamp=%s", time.Now().Format(time.RFC3339)))
-				}
-			}
+	if cfg.IsSlave {
+		rows, err := db.QueryContext(ctx, "SHOW SLAVE STATUS")
+		if err != nil {
+			slog.Warn("Failed to query slave status", "error", err, "component", "mysql")
 		} else {
-			slog.Debug("No slave status found, likely a main node", "component", "mysql")
+			defer rows.Close()
+			if rows.Next() {
+				columns, err := rows.Columns()
+				if err != nil {
+					slog.Warn("Failed to get slave status columns", "error", err, "component", "mysql")
+				} else {
+					values := make([]sql.RawBytes, len(columns))
+					valuePtrs := make([]interface{}, len(columns))
+					for i := range values {
+						var v sql.RawBytes
+						valuePtrs[i] = &v
+						values[i] = &v
+					}
+					if err := rows.Scan(valuePtrs...); err != nil {
+						slog.Warn("Failed to scan slave status", "error", err, "component", "mysql")
+					} else {
+						slaveStatus := make(map[string]string)
+						for i, col := range columns {
+							if raw, ok := values[i].(*sql.RawBytes); ok {
+								slaveStatus[col] = string(*raw)
+							} else {
+								slaveStatus[col] = ""
+							}
+						}
+						issues := []string{}
+						if slaveStatus["Slave_IO_Running"] != "Yes" {
+							issues = append(issues, "Slave_IO_Running 异常")
+						}
+						if slaveStatus["Slave_SQL_Running"] != "Yes" {
+							issues = append(issues, "Slave_SQL_Running 异常")
+						}
+						if secondsStr := slaveStatus["Seconds_Behind_Master"]; secondsStr != "" {
+							if seconds, err := strconv.ParseInt(secondsStr, 10, 64); err == nil && seconds > int64(cfg.SecondsBehindThreshold) {
+								issues = append(issues, fmt.Sprintf("Seconds_Behind_Master: %d (超过阈值 %d)", seconds, cfg.SecondsBehindThreshold))
+							} else if err != nil {
+								slog.Warn("Failed to parse Seconds_Behind_Master", "value", secondsStr, "error", err, "component", "mysql")
+								issues = append(issues, fmt.Sprintf("Seconds_Behind_Master: 无效值 %s", secondsStr))
+							}
+						}
+						errNoStr := slaveStatus["Last_Errno"]
+						lastError := slaveStatus["Last_Error"]
+						errNo, parseErr := strconv.Atoi(errNoStr)
+						if parseErr != nil {
+							slog.Warn("Failed to parse Last_Errno", "value", errNoStr, "error", parseErr, "component", "mysql")
+							errNo = -1 // Invalid, treat as issue
+						}
+						if errNo != 0 && lastError != "" {
+							issues = append(issues, fmt.Sprintf("Last_Errno: %d", errNo))
+							issues = append(issues, fmt.Sprintf("Last_Error: %s", lastError))
+						}
+						if len(issues) > 0 {
+							hasIssue = true
+							details.WriteString("从库状态异常:\n")
+							fmt.Fprintf(&details, "| %s | %s |\n", "参数", "值")
+							fmt.Fprintf(&details, "|%s|%s|\n", "------", "------")
+							fmt.Fprintf(&details, "| %s | %s |\n", "Slave_IO_Running", slaveStatus["Slave_IO_Running"])
+							fmt.Fprintf(&details, "| %s | %s |\n", "Slave_SQL_Running", slaveStatus["Slave_SQL_Running"])
+							fmt.Fprintf(&details, "| %s | %s |\n", "Seconds_Behind_Master", slaveStatus["Seconds_Behind_Master"])
+							fmt.Fprintf(&details, "| %s | %s |\n", "Read_Master_Log_Pos", slaveStatus["Read_Master_Log_Pos"])
+							fmt.Fprintf(&details, "| %s | %s |\n", "Last_Errno", slaveStatus["Last_Errno"])
+							fmt.Fprintf(&details, "| %s | %s |\n", "Last_Error", slaveStatus["Last_Error"])
+							fmt.Fprintf(&details, "| %s | %s |\n", "Master_Log_File", slaveStatus["Master_Log_File"])
+							slog.Info("MySQL slave status issue detected", "issues", issues, "component", "mysql")
+						} else {
+							logToFile(fmt.Sprintf("Slave status normal: Last_Errno=0, Last_Error='', Timestamp=%s", time.Now().Format(time.RFC3339)))
+						}
+					}
+				}
+			} else {
+				slog.Debug("No slave status found, likely a main node", "component", "mysql")
+			}
 		}
-	} else {
-		slog.Warn("Failed to query slave status", "error", err, "component", "mysql")
 	}
 
 	// Check deadlocks
@@ -406,49 +417,10 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	// Send aggregated alert if issues detected
 	if hasIssue && details.Len() > 0 {
 		if bot != nil {
-			msg := bot.FormatAlert("数据库告警", "异常", details.String(), hostIP, "alert")
-			if err := sendMySQLAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "异常", details.String(), hostIP, "alert", msg); err != nil {
-				return err
-			}
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 		}
 	}
 
 	slog.Debug("No MySQL issues detected", "component", "mysql")
-	return nil
-}
-
-// sendMySQLAlert sends a deduplicated Telegram alert for the MySQL module.
-func sendMySQLAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, message string) error {
-	if bot == nil {
-		slog.Warn("Alert bot is nil, skipping alert", "service_name", serviceName, "event_name", eventName, "component", "mysql")
-		return nil
-	}
-	hash, err := util.MD5Hash(details)
-	if err != nil {
-		slog.Error("Failed to generate alert hash", "error", err, "component", "mysql")
-		return fmt.Errorf("failed to generate alert hash: %w", err)
-	}
-	cacheMutex.Lock()
-	now := time.Now()
-	if timestamp, ok := alertCache[hash]; ok && now.Sub(timestamp) < alertSilenceDuration {
-		slog.Info("Skipping duplicate alert", "hash", hash, "component", "mysql")
-		cacheMutex.Unlock()
-		return nil
-	}
-	alertCache[hash] = now
-	// Clean up old cache entries
-	for h, t := range alertCache {
-		if now.Sub(t) >= alertSilenceDuration {
-			delete(alertCache, h)
-			slog.Debug("Removed expired alert cache entry", "hash", h, "component", "mysql")
-		}
-	}
-	cacheMutex.Unlock()
-	slog.Debug("Sending alert", "message", message, "details", details, "component", "mysql")
-	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType); err != nil {
-		slog.Error("Failed to send alert", "error", err, "message", message, "details", details, "component", "mysql")
-		return fmt.Errorf("failed to send alert: %w", err)
-	}
-	slog.Info("Sent alert", "message", message, "details", details, "component", "mysql")
 	return nil
 }

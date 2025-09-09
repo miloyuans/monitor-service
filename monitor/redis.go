@@ -2,12 +2,9 @@ package monitor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +31,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 		details := fmt.Sprintf("Failed to detect Redis mode: %v", err)
 		return sendRedisAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Redis Monitor", "Mode Detection Failed", details, hostIP, "alert", "redis", nil)
 	}
-	slog.Info("Detected Redis mode", "is_cluster", isCluster, "component", "redis")
+	slog.Info("Detected Redis mode", "is_cluster", isCluster, "addr", cfg.Addr, "component", "redis")
 
 	// Initialize Redis client based on mode
 	var client redis.UniversalClient
@@ -47,7 +44,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 		client = redis.NewClient(&redis.Options{
 			Addr:     cfg.Addr,
 			Password: cfg.Password,
-			DB:       0, // Default to DB 0, will switch for multi-DB scan
+			DB:       0,
 		})
 	}
 	defer client.Close()
@@ -62,7 +59,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 		return sendRedisAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Redis Monitor", "Connection Failed", details, hostIP, "alert", "redis", nil)
 	}
 
-	// Get overall metrics using INFO to monitor memory, CPU, etc.
+	// Get overall metrics using INFO
 	infoCtx, infoCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer infoCancel()
 	info, err := client.Info(infoCtx, "all").Result()
@@ -74,31 +71,35 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 
 	// Parse INFO for key metrics
 	metrics := parseRedisInfo(info)
-	if metrics["used_memory_rss"].(float64) / metrics["used_memory"].(float64) > 1.5 {
-		details := fmt.Sprintf("High memory fragmentation: %v", metrics["mem_fragmentation_ratio"])
-		slog.Info("High memory fragmentation detected", "ratio", metrics["mem_fragmentation_ratio"], "component", "redis")
+	if ratio, ok := metrics["mem_fragmentation_ratio"].(float64); ok && ratio > 1.5 {
+		details := fmt.Sprintf("High memory fragmentation: %.2f", ratio)
+		slog.Info("High memory fragmentation detected", "ratio", ratio, "component", "redis")
 		if err := sendRedisAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Redis Monitor", "High Memory Fragmentation", details, hostIP, "alert", "redis", nil); err != nil {
 			return err
 		}
 	}
-	if metrics["evicted_keys"].(int64) > 0 {
-		details := fmt.Sprintf("Keys evicted due to memory pressure: %d", metrics["evicted_keys"])
-		slog.Info("Key evictions detected", "evicted_keys", metrics["evicted_keys"], "component", "redis")
+	if evicted, ok := metrics["evicted_keys"].(int64); ok && evicted > 0 {
+		details := fmt.Sprintf("Keys evicted due to memory pressure: %d", evicted)
+		slog.Info("Key evictions detected", "evicted_keys", evicted, "component", "redis")
 		if err := sendRedisAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Redis Monitor", "Key Evictions", details, hostIP, "alert", "redis", nil); err != nil {
 			return err
 		}
 	}
-	hitRatio := float64(metrics["keyspace_hits"].(int64)) / float64(metrics["keyspace_hits"].(int64) + metrics["keyspace_misses"].(int64))
-	if hitRatio < 0.9 {
-		details := fmt.Sprintf("Low cache hit ratio: %.2f", hitRatio)
-		slog.Info("Low cache hit ratio detected", "hit_ratio", hitRatio, "component", "redis")
-		if err := sendRedisAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Redis Monitor", "Low Cache Hit Ratio", details, hostIP, "alert", "redis", nil); err != nil {
-			return err
+	if hits, ok1 := metrics["keyspace_hits"].(int64); ok1 {
+		if misses, ok2 := metrics["keyspace_misses"].(int64); ok2 && hits+misses > 0 {
+			hitRatio := float64(hits) / float64(hits+misses)
+			if hitRatio < 0.9 {
+				details := fmt.Sprintf("Low cache hit ratio: %.2f", hitRatio)
+				slog.Info("Low cache hit ratio detected", "hit_ratio", hitRatio, "component", "redis")
+				if err := sendRedisAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Redis Monitor", "Low Cache Hit Ratio", details, hostIP, "alert", "redis", nil); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
 	if isCluster {
-		// Check cluster nodes with timeout (cluster mode only)
+		// Check cluster nodes
 		nodesCtx, nodesCancel := context.WithTimeout(ctx, 3*time.Second)
 		defer nodesCancel()
 		nodes, err := client.ClusterNodes(nodesCtx).Result()
@@ -110,14 +111,12 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 
 		failedNodes := []string{}
 		for _, line := range strings.Split(nodes, "\n") {
-			if line == "" {
+			if line == "" || !strings.Contains(line, "fail") {
 				continue
 			}
-			if strings.Contains(line, "fail") {
-				fields := strings.Fields(line)
-				if len(fields) > 1 {
-					failedNodes = append(failedNodes, alert.EscapeMarkdown(fields[1])) // addr
-				}
+			fields := strings.Fields(line)
+			if len(fields) > 1 {
+				failedNodes = append(failedNodes, alert.EscapeMarkdown(fields[1]))
 			}
 		}
 		if len(failedNodes) > 0 {
@@ -131,7 +130,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 			}
 		}
 
-		// Check slot coverage with timeout (cluster mode only)
+		// Check slot coverage
 		slotsCtx, slotsCancel := context.WithTimeout(ctx, 3*time.Second)
 		defer slotsCancel()
 		slots, err := client.ClusterSlots(slotsCtx).Result()
@@ -153,10 +152,10 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 		}
 	}
 
-	// Check big keys with timeout and sampling to minimize impact
+	// Check big keys with timeout and sampling
 	scanTimeout, err := time.ParseDuration(cfg.ScanTimeout)
 	if err != nil {
-		scanTimeout = 5 * time.Second // Fallback to 5 seconds
+		scanTimeout = 5 * time.Second
 		slog.Warn("Invalid scan_timeout, using default", "scan_timeout", cfg.ScanTimeout, "error", err, "component", "redis")
 	}
 	scanCtx, scanCancel := context.WithTimeout(ctx, scanTimeout)
@@ -165,15 +164,13 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 	bigKeys := []string{}
 	bigKeysCount := 0
 	scannedDBs := []string{}
-	const sampleCount = 100 // Number of random keys to sample per DB or cluster
+	const sampleCount = 100
 
 	slog.Info("Sampling for big keys", "threshold_bytes", cfg.BigKeyThreshold, "sample_count", sampleCount, "timeout", scanTimeout.String(), "component", "redis")
 	if isCluster {
-		// Cluster mode: Sample on DB 0 across all masters
 		scannedDBs = append(scannedDBs, "0 (cluster mode)")
 		err = sampleBigKeys(scanCtx, client, cfg, sampleCount, &bigKeys, &bigKeysCount)
 	} else {
-		// Single-node mode: Get number of databases and sample each
 		dbCountStr, err := client.ConfigGet(scanCtx, "databases").Result()
 		if err != nil {
 			slog.Error("Failed to get number of databases", "error", err, "component", "redis")
@@ -183,17 +180,15 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 		dbCount, err := strconv.Atoi(dbCountStr["databases"])
 		if err != nil {
 			slog.Error("Invalid databases config", "value", dbCountStr["databases"], "error", err, "component", "redis")
-			dbCount = 16 // Default to 16 databases
+			dbCount = 16
 		}
 		for db := 0; db < dbCount; db++ {
-			dbClient := redis.NewClient(&redis.Options{
-				Addr:     cfg.Addr,
-				Password: cfg.Password,
-				DB:       db,
-			})
-			defer dbClient.Close()
+			if err := client.Do(scanCtx, "SELECT", db).Err(); err != nil {
+				slog.Error("Failed to select DB", "db", db, "error", err, "component", "redis")
+				continue
+			}
 			scannedDBs = append(scannedDBs, strconv.Itoa(db))
-			if err := sampleBigKeys(scanCtx, dbClient, cfg, sampleCount/dbCount+1, &bigKeys, &bigKeysCount); err != nil && err != context.DeadlineExceeded {
+			if err := sampleBigKeys(scanCtx, client, cfg, sampleCount/dbCount+1, &bigKeys, &bigKeysCount); err != nil && err != context.DeadlineExceeded {
 				slog.Error("Failed to sample big keys in DB", "db", db, "error", err, "component", "redis")
 				details := fmt.Sprintf("Failed to sample big keys in DB %d: %v", db, err)
 				return sendRedisAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "Redis Monitor", "Big Key Sample Failed", details, hostIP, "alert", "redis", nil)
@@ -225,67 +220,64 @@ func isRedisCluster(ctx context.Context, cfg config.RedisConfig) (bool, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:     cfg.Addr,
 		Password: cfg.Password,
-		DB:       0, // Use DB 0 for cluster check
+		DB:       0,
 	})
 	defer client.Close()
 
-	// Check CLUSTER INFO
 	info, err := client.ClusterInfo(ctx).Result()
 	if err != nil && strings.Contains(err.Error(), "ERR This instance has cluster support disabled") {
-		return false, nil // Single-node mode
+		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("failed to get cluster info: %w", err)
 	}
-	if strings.Contains(info, "cluster_state:ok") {
-		return true, nil // Cluster mode
-	}
-	return false, nil // Single-node mode
+	return strings.Contains(info, "cluster_state:ok"), nil
 }
 
-// sampleBigKeys samples random keys for big key detection on the given client to minimize impact.
+// sampleBigKeys samples random keys for big key detection using pipelining.
 func sampleBigKeys(ctx context.Context, client redis.UniversalClient, cfg config.RedisConfig, sampleCount int, bigKeys *[]string, bigKeysCount *int) error {
 	startTime := time.Now()
+	pipe := client.Pipeline()
+	keys := make([]string, 0, sampleCount)
+	cmds := make([]*redis.IntCmd, 0, sampleCount)
+
 	for i := 0; i < sampleCount; i++ {
 		select {
 		case <-ctx.Done():
 			slog.Warn("Big key sampling timed out", "elapsed", time.Since(startTime).String(), "sampled_keys", i, "component", "redis")
 			return ctx.Err()
 		default:
-			key, err := client.RandomKey(ctx).Result()
-			if err != nil {
-				if err == redis.Nil {
-					continue // No keys or empty DB
-				}
+			keyCmd := client.RandomKey(ctx)
+			if key, err := keyCmd.Result(); err == nil {
+				keys = append(keys, key)
+				cmds = append(cmds, pipe.MemoryUsage(ctx, key))
+			} else if err != redis.Nil {
 				slog.Warn("Failed to get random key", "error", err, "component", "redis")
-				continue
-			}
-			// Get memory usage
-			memoryUsage, err := client.MemoryUsage(ctx, key).Result()
-			if err != nil {
-				slog.Warn("Failed to get memory usage for key", "key", key, "error", err, "component", "redis")
-				continue
-			}
-			if memoryUsage > cfg.BigKeyThreshold {
-				*bigKeys = append(*bigKeys, fmt.Sprintf("%s (size: %d bytes)", alert.EscapeMarkdown(key), memoryUsage))
-				*bigKeysCount++
-			}
-			// Log progress every 50 samples
-			if (i+1)%50 == 0 {
-				elapsed := time.Since(startTime).Seconds()
-				rate := float64(i+1) / elapsed
-				slog.Info("Big key sampling progress", "sampled_keys", i+1, "big_keys_count", *bigKeysCount, "rate_samples_per_sec", fmt.Sprintf("%.0f", rate), "component", "redis")
 			}
 		}
 	}
+
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		slog.Warn("Failed to execute pipeline for memory usage", "error", err, "component", "redis")
+		return err
+	}
+
+	for i, cmd := range cmds {
+		if memoryUsage, err := cmd.Result(); err == nil && memoryUsage > cfg.BigKeyThreshold {
+			*bigKeys = append(*bigKeys, fmt.Sprintf("%s (size: %d bytes)", alert.EscapeMarkdown(keys[i]), memoryUsage))
+			*bigKeysCount++
+		}
+	}
+
+	elapsed := time.Since(startTime).Seconds()
+	slog.Info("Big key sampling completed", "sampled_keys", len(keys), "big_keys_count", *bigKeysCount, "rate_samples_per_sec", fmt.Sprintf("%.0f", float64(len(keys))/elapsed), "component", "redis")
 	return nil
 }
 
 // parseRedisInfo parses the INFO output into a map of metrics.
 func parseRedisInfo(info string) map[string]interface{} {
 	metrics := make(map[string]interface{})
-	lines := strings.Split(info, "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(info, "\n") {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -293,8 +285,7 @@ func parseRedisInfo(info string) map[string]interface{} {
 		if len(parts) != 2 {
 			continue
 		}
-		key := parts[0]
-		valueStr := parts[1]
+		key, valueStr := parts[0], parts[1]
 		if value, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
 			metrics[key] = value
 		} else if value, err := strconv.ParseFloat(valueStr, 64); err == nil {
@@ -321,7 +312,6 @@ func sendRedisAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[str
 		return nil
 	}
 	alertCache[hash] = now
-	// Clean up old cache entries
 	for h, t := range alertCache {
 		if now.Sub(t) >= alertSilenceDuration {
 			delete(alertCache, h)
@@ -330,13 +320,11 @@ func sendRedisAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[str
 	}
 	cacheMutex.Unlock()
 
-	// Generate Telegram message for logging
 	message := ""
 	if bot != nil {
 		message = bot.FormatAlert(serviceName, eventName, details, hostIP, alertType)
 	}
 
-	// Send alert to Telegram and monitor-web
 	slog.Debug("Sending alert", "message", message, "service_name", serviceName, "event_name", eventName, "module", module, "component", "redis")
 	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType, module, specificFields); err != nil {
 		slog.Error("Failed to send alert", "error", err, "service_name", serviceName, "event_name", eventName, "module", module, "component", "redis")
