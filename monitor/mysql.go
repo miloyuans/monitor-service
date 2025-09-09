@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -262,7 +263,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check replica status
-	if cfg.IsSlave {
+	if cfg.IsReplica {
 		rows, err := db.QueryContext(ctx, "SHOW SLAVE STATUS")
 		if err != nil {
 			slog.Warn("Failed to query replica status", "error", err, "component", "mysql")
