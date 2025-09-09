@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/process"
 	"monitor-service/alert"
 	"monitor-service/config"
@@ -67,10 +67,10 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	// Check and cleanup historical files every 30 days
 	if shouldCleanup(lastCleanupFile, 30*24*time.Hour) {
 		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
-			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to cleanup historical files: %v", err), hostIP, "alert")
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to cleanup historical files: %v", err), hostIP, "alert", "system", nil)
 		}
 		if err := updateLastCleanup(lastCleanupFile); err != nil {
-			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to update last cleanup time: %v", err), hostIP, "alert")
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to update last cleanup time: %v", err), hostIP, "alert", "system", nil)
 		}
 	}
 
@@ -92,18 +92,18 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	// Monitor users
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
-		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to get current users: %v", err), hostIP, "alert")
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to get current users: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Retrieved current users", "count", len(currentUsers), "component", "system")
 	initialUsers, err := loadInitialUsers(userInitialFile)
 	if err != nil {
-		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to load initial users: %v", err), hostIP, "alert")
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to load initial users: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Loaded initial users", "count", len(initialUsers), "component", "system")
 	if len(initialUsers) == 0 {
 		slog.Info("First run: initializing user file", "component", "system")
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
-			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to save initial users: %v", err), hostIP, "alert")
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to save initial users: %v", err), hostIP, "alert", "system", nil)
 		}
 	} else {
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
@@ -120,20 +120,20 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	}
 
 	// Monitor processes
-	currentProcesses, err := getCurrentProcesses()
+	currentProcesses, err := getCurrentProcesses(ctx)
 	if err != nil {
-		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to get current processes: %v", err), hostIP, "alert")
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to get current processes: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Retrieved current processes", "count", len(currentProcesses), "component", "system")
 	initialProcesses, err := loadInitialProcesses(processInitialFile)
 	if err != nil {
-		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to load initial processes: %v", err), hostIP, "alert")
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to load initial processes: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Loaded initial processes", "count", len(initialProcesses), "component", "system")
 	if len(initialProcesses) == 0 {
 		slog.Info("First run: initializing process file", "component", "system")
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
-			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to save initial processes: %v", err), hostIP, "alert")
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to save initial processes: %v", err), hostIP, "alert", "system", nil)
 		}
 	} else {
 		addedProcesses, removedProcesses := diffProcesses(currentProcesses, initialProcesses)
@@ -151,7 +151,15 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 			slog.Info("Detected process changes (after filtering)", "added_processes", len(filteredAdded), "removed_processes", len(filteredRemoved), "component", "system")
 		}
 		if len(ignoredAdded) > 0 || len(ignoredRemoved) > 0 {
-			logIgnoredChange(changeLogFile, "process", ignoredAdded, ignoredRemoved)
+			var addedAny []any
+			for _, p := range ignoredAdded {
+				addedAny = append(addedAny, p)
+			}
+			var removedAny []any
+			for _, p := range ignoredRemoved {
+				removedAny = append(removedAny, p)
+			}
+			logIgnoredChange(changeLogFile, "process", addedAny, removedAny)
 			slog.Debug("Logged ignored process changes", "ignored_added", len(ignoredAdded), "ignored_removed", len(ignoredRemoved), "component", "system")
 		}
 	}
@@ -160,28 +168,17 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	if needsReinit {
 		slog.Info("Reinitializing system monitoring due to file size limit", "component", "system")
 		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses, changeLogFile, processLogFile); err != nil {
-			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to reinitialize system monitoring: %v", err), hostIP, "alert")
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to reinitialize system monitoring: %v", err), hostIP, "alert", "system", nil)
 		}
 	}
 
 	// Send alert if issues detected
 	if hasIssue {
-		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Change Detected", details.String(), hostIP, "alert")
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Change Detected", details.String(), hostIP, "alert", "system", nil)
 	}
 
 	slog.Debug("No system issues detected", "component", "system")
 	return nil
-}
-
-// handleError centralizes error handling and alert sending.
-func handleError(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType string) error {
-	if bot != nil {
-		msg := bot.FormatAlert(serviceName, eventName, details, hostIP, alertType)
-		if err := sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, serviceName, eventName, details, hostIP, alertType, msg); err != nil {
-			return fmt.Errorf("%s: %w", details, err)
-		}
-	}
-	return fmt.Errorf("%s", details)
 }
 
 // filterProcesses filters processes based on ignore patterns.
@@ -234,37 +231,6 @@ func logIgnoredChange(changeLogFile, changeType string, added, removed []any) {
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		slog.Error("Failed to write ignored change entry", "error", err, "component", "system")
 	}
-}
-
-// sendSystemAlert sends a deduplicated Telegram alert for the System module.
-func sendSystemAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, message string) error {
-	hash, err := util.MD5Hash(details)
-	if err != nil {
-		slog.Error("Failed to generate alert hash", "error", err, "component", "system")
-		return fmt.Errorf("failed to generate alert hash: %w", err)
-	}
-	cacheMutex.Lock()
-	now := time.Now()
-	if timestamp, ok := alertCache[hash]; ok && now.Sub(timestamp) < alertSilenceDuration {
-		slog.Info("Skipping duplicate alert", "hash", hash, "service_name", serviceName, "event_name", eventName, "component", "system")
-		cacheMutex.Unlock()
-		return nil
-	}
-	alertCache[hash] = now
-	for h, t := range alertCache {
-		if now.Sub(t) >= alertSilenceDuration {
-			delete(alertCache, h)
-			slog.Debug("Removed expired alert cache entry", "hash", h, "component", "system")
-		}
-	}
-	cacheMutex.Unlock()
-	slog.Debug("Sending alert", "message", message, "service_name", serviceName, "event_name", eventName, "component", "system")
-	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType, "", nil); err != nil {
-		slog.Error("Failed to send alert", "error", err, "service_name", serviceName, "event_name", eventName, "component", "system")
-		return fmt.Errorf("failed to send alert: %w", err)
-	}
-	slog.Info("Sent alert", "message", message, "service_name", serviceName, "event_name", eventName, "component", "system")
-	return nil
 }
 
 // getCurrentUsers retrieves the current list of users.
@@ -341,7 +307,7 @@ func diffStrings(current, initial []string) (added, removed []string) {
 }
 
 // getCurrentProcesses retrieves the current list of processes.
-func getCurrentProcesses() ([]ProcessInfo, error) {
+func getCurrentProcesses(ctx context.Context) ([]ProcessInfo, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()

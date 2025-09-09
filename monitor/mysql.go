@@ -3,7 +3,6 @@ package monitor
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -38,12 +37,12 @@ func loadState() (*MySQLState, error) {
 		return nil, nil
 	}
 	if err != nil {
-		slog.Error("Failed to read MySQL state file", "error", err, "component", "mysql")
+		slog.Error("Failed to read MySQL state file", "file", stateFile, "error", err, "component", "mysql")
 		return nil, fmt.Errorf("failed to read MySQL state file: %w", err)
 	}
 	var state MySQLState
 	if err := json.Unmarshal(data, &state); err != nil {
-		slog.Error("Failed to unmarshal MySQL state", "error", err, "component", "mysql")
+		slog.Error("Failed to unmarshal MySQL state", "file", stateFile, "error", err, "component", "mysql")
 		return nil, fmt.Errorf("failed to unmarshal MySQL state: %w", err)
 	}
 	return &state, nil
@@ -57,21 +56,26 @@ func saveState(state *MySQLState) error {
 		return fmt.Errorf("failed to marshal MySQL state: %w", err)
 	}
 	if err := os.WriteFile(stateFile, data, 0644); err != nil {
-		slog.Error("Failed to write MySQL state file", "error", err, "component", "mysql")
+		slog.Error("Failed to write MySQL state file", "file", stateFile, "error", err, "component", "mysql")
 		return fmt.Errorf("failed to write MySQL state file: %w", err)
 	}
-	slog.Debug("Saved MySQL state to file", "component", "mysql")
+	slog.Debug("Saved MySQL state", "file", stateFile, "component", "mysql")
 	return nil
 }
 
 // getMySQLUptime fetches the Uptime from MySQL in seconds.
 func getMySQLUptime(db *sql.DB, ctx context.Context) (uint64, error) {
 	var variableName string
-	var uptime uint64
-	err := db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Uptime'").Scan(&variableName, &uptime)
+	var uptimeStr string
+	err := db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Uptime'").Scan(&variableName, &uptimeStr)
 	if err != nil {
 		slog.Warn("Failed to query Uptime", "error", err, "component", "mysql")
 		return 0, fmt.Errorf("failed to query Uptime: %w", err)
+	}
+	uptime, err := strconv.ParseUint(uptimeStr, 10, 64)
+	if err != nil {
+		slog.Warn("Failed to parse Uptime", "value", uptimeStr, "error", err, "component", "mysql")
+		return 0, fmt.Errorf("failed to parse Uptime: %w", err)
 	}
 	return uptime, nil
 }
@@ -79,11 +83,16 @@ func getMySQLUptime(db *sql.DB, ctx context.Context) (uint64, error) {
 // getCurrentDeadlocks fetches the current Innodb_deadlocks count.
 func getCurrentDeadlocks(db *sql.DB, ctx context.Context) (uint64, error) {
 	var variableName string
-	var deadlocks uint64
-	err := db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Innodb_deadlocks'").Scan(&variableName, &deadlocks)
+	var deadlocksStr string
+	err := db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Innodb_deadlocks'").Scan(&variableName, &deadlocksStr)
 	if err != nil {
 		slog.Warn("Failed to query Innodb_deadlocks", "error", err, "component", "mysql")
 		return 0, fmt.Errorf("failed to query Innodb_deadlocks: %w", err)
+	}
+	deadlocks, err := strconv.ParseUint(deadlocksStr, 10, 64)
+	if err != nil {
+		slog.Warn("Failed to parse Innodb_deadlocks", "value", deadlocksStr, "error", err, "component", "mysql")
+		return 0, fmt.Errorf("failed to parse Innodb_deadlocks: %w", err)
 	}
 	return deadlocks, nil
 }
@@ -91,11 +100,16 @@ func getCurrentDeadlocks(db *sql.DB, ctx context.Context) (uint64, error) {
 // getCurrentSlowQueries fetches the current Slow_queries count.
 func getCurrentSlowQueries(db *sql.DB, ctx context.Context) (uint64, error) {
 	var variableName string
-	var slowQueries uint64
-	err := db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Slow_queries'").Scan(&variableName, &slowQueries)
+	var slowQueriesStr string
+	err := db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Slow_queries'").Scan(&variableName, &slowQueriesStr)
 	if err != nil {
 		slog.Warn("Failed to query Slow_queries", "error", err, "component", "mysql")
 		return 0, fmt.Errorf("failed to query Slow_queries: %w", err)
+	}
+	slowQueries, err := strconv.ParseUint(slowQueriesStr, 10, 64)
+	if err != nil {
+		slog.Warn("Failed to parse Slow_queries", "value", slowQueriesStr, "error", err, "component", "mysql")
+		return 0, fmt.Errorf("failed to parse Slow_queries: %w", err)
 	}
 	return slowQueries, nil
 }
@@ -105,15 +119,25 @@ func logToFile(message string) {
 	const filePath = ".mysql_slave_log"
 	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		slog.Error("Failed to open slave log file", "error", err, "component", "mysql")
+		slog.Error("Failed to open slave log file", "file", filePath, "error", err, "component", "mysql")
 		return
 	}
 	defer f.Close()
 	if _, err := f.WriteString(message + "\n"); err != nil {
-		slog.Error("Failed to write to slave log file", "error", err, "component", "mysql")
+		slog.Error("Failed to write to slave log file", "file", filePath, "error", err, "component", "mysql")
 	} else {
-		slog.Debug("Logged slave status to file", "message", message, "component", "mysql")
+		slog.Debug("Logged slave status", "file", filePath, "message", message, "component", "mysql")
 	}
+}
+
+// handleError centralizes error handling and alert sending.
+func handleError(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType string) error {
+	if bot != nil {
+		if err := util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, serviceName, eventName, details, hostIP, alertType, "", map[string]interface{}{}); err != nil {
+			return fmt.Errorf("%s: %w", details, err)
+		}
+	}
+	return fmt.Errorf("%s", details)
 }
 
 // MySQL monitors MySQL instance and sends alerts for connectivity, slave status, deadlocks, connections, and slow queries.
@@ -128,23 +152,15 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	// Load state
 	state, err := loadState()
 	if err != nil {
-		return err
+		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", fmt.Sprintf("Failed to load state: %v", err), hostIP, "alert")
 	}
 	fileExisted := state != nil
-
-	// Initialize details for alert message
-	var details strings.Builder
-	hasIssue := false
 
 	// Open database connection
 	db, err := sql.Open("mysql", cfg.DSN)
 	if err != nil {
 		slog.Error("Failed to open MySQL connection", "dsn", cfg.DSN, "error", err, "component", "mysql")
-		details.WriteString(fmt.Sprintf("监控启动，但数据库连接失败: %v", err))
-		if bot != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
-		}
-		return fmt.Errorf("failed to open MySQL connection: %w", err)
+		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", fmt.Sprintf("Failed to open MySQL connection: %v", err), hostIP, "alert")
 	}
 	defer db.Close()
 
@@ -152,9 +168,8 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	currentTime := time.Now()
 	if err := db.PingContext(ctx); err != nil {
 		slog.Error("Failed to ping MySQL", "dsn", cfg.DSN, "error", err, "component", "mysql")
-		details.WriteString(fmt.Sprintf("监控启动，但数据库连接失败: %v", err))
+		details := fmt.Sprintf("监控启动，但数据库连接失败: %v", err)
 		if fileExisted && !state.IsStopped {
-			// Calculate runtime
 			var runtimeMin int
 			if state.LastStopTime.IsZero() {
 				runtimeSeconds := state.LastUptime + uint64(currentTime.Sub(state.LastCheckTime).Seconds())
@@ -162,23 +177,18 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 			} else {
 				runtimeMin = int(state.LastStopTime.Sub(state.InitTime).Minutes())
 			}
-			details.WriteString(fmt.Sprintf("\nMySQL 服务停止，运行了 %d 分钟", runtimeMin))
+			details += fmt.Sprintf("\nMySQL 服务停止，运行了 %d 分钟", runtimeMin)
 			state.LastStopTime = currentTime
 			state.IsStopped = true
 			if err := saveState(state); err != nil {
 				slog.Error("Failed to save state on stop", "error", err, "component", "mysql")
 			}
-			if bot != nil {
-				return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务停止", details.String(), hostIP, "alert", "", map[string]interface{}{})
-			}
+			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务停止", details, hostIP, "alert")
 		}
-		if bot != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
-		}
-		return fmt.Errorf("failed to ping MySQL: %w", err)
+		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "监控启动异常", details, hostIP, "alert")
 	}
 
-	// Connection success
+	// Fetch metrics
 	var uptime, currentDeadlocks, currentSlowQueries uint64
 	uptime, err = getMySQLUptime(db, ctx)
 	if err != nil {
@@ -195,8 +205,11 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		slog.Warn("Failed to query slow queries, setting to 0", "error", err, "component", "mysql")
 		currentSlowQueries = 0
 	}
-	slog.Debug("MySQL connection successful", "component", "mysql")
+	slog.Debug("MySQL connection successful", "uptime", uptime, "component", "mysql")
 
+	// Initialize or update state
+	var details strings.Builder
+	hasIssue := false
 	if state == nil {
 		// First run
 		state = &MySQLState{
@@ -209,7 +222,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 			IsStopped:       false,
 		}
 		if err := saveState(state); err != nil {
-			return err
+			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "状态保存失败", fmt.Sprintf("Failed to save initial state: %v", err), hostIP, "alert")
 		}
 		slog.Info("MySQL first run: connection successful", "component", "mysql")
 	} else if state.IsStopped {
@@ -217,10 +230,6 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		downtimeMin := int(currentTime.Sub(state.LastStopTime).Minutes())
 		details.WriteString(fmt.Sprintf("MySQL 服务恢复正常，停机了 %d 分钟", downtimeMin))
 		hasIssue = true
-		if bot != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务恢复", details.String(), hostIP, "alert", "", map[string]interface{}{})
-		}
-		// Refresh initialization data on recovery
 		state.LastDeadlocks = currentDeadlocks
 		state.LastSlowQueries = currentSlowQueries
 		state.IsStopped = false
@@ -229,52 +238,54 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 		state.LastCheckTime = currentTime
 		state.LastStopTime = time.Time{}
 		if err := saveState(state); err != nil {
-			return err
+			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "状态保存失败", fmt.Sprintf("Failed to save recovery state: %v", err), hostIP, "alert")
 		}
 	} else if uptime < state.LastUptime {
 		// Restart detected
 		runtimeMin := int(state.LastUptime / 60)
 		details.WriteString(fmt.Sprintf("MySQL 服务重启，之前运行了 %d 分钟", runtimeMin))
 		hasIssue = true
-		if bot != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "服务重启", details.String(), hostIP, "alert", "", map[string]interface{}{})
-		}
-		// Refresh initialization data on restart
 		state.InitTime = currentTime
 		state.LastDeadlocks = currentDeadlocks
 		state.LastSlowQueries = currentSlowQueries
+		state.LastUptime = uptime
+		state.LastCheckTime = currentTime
 		if err := saveState(state); err != nil {
-			return err
+			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "状态保存失败", fmt.Sprintf("Failed to save restart state: %v", err), hostIP, "alert")
 		}
 	} else {
 		state.LastUptime = uptime
 		state.LastCheckTime = currentTime
 		if err := saveState(state); err != nil {
-			return err
+			return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "状态保存失败", fmt.Sprintf("Failed to save state: %v", err), hostIP, "alert")
 		}
 	}
 
-	// Check slave status
+	// Check replica status
 	if cfg.IsSlave {
 		rows, err := db.QueryContext(ctx, "SHOW SLAVE STATUS")
 		if err != nil {
-			slog.Warn("Failed to query slave status", "error", err, "component", "mysql")
+			slog.Warn("Failed to query replica status", "error", err, "component", "mysql")
+			details.WriteString(fmt.Sprintf("无法查询从库状态: %v\n", err))
+			hasIssue = true
 		} else {
 			defer rows.Close()
 			if rows.Next() {
 				columns, err := rows.Columns()
 				if err != nil {
-					slog.Warn("Failed to get slave status columns", "error", err, "component", "mysql")
+					slog.Warn("Failed to get replica status columns", "error", err, "component", "mysql")
+					details.WriteString(fmt.Sprintf("无法获取从库状态列: %v\n", err))
+					hasIssue = true
 				} else {
-					values := make([]sql.RawBytes, len(columns))
-					valuePtrs := make([]interface{}, len(columns))
+					values := make([]interface{}, len(columns))
 					for i := range values {
 						var v sql.RawBytes
-						valuePtrs[i] = &v
 						values[i] = &v
 					}
-					if err := rows.Scan(valuePtrs...); err != nil {
-						slog.Warn("Failed to scan slave status", "error", err, "component", "mysql")
+					if err := rows.Scan(values...); err != nil {
+						slog.Warn("Failed to scan replica status", "error", err, "component", "mysql")
+						details.WriteString(fmt.Sprintf("无法扫描从库状态: %v\n", err))
+						hasIssue = true
 					} else {
 						slaveStatus := make(map[string]string)
 						for i, col := range columns {
@@ -299,37 +310,33 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 								issues = append(issues, fmt.Sprintf("Seconds_Behind_Master: 无效值 %s", secondsStr))
 							}
 						}
-						errNoStr := slaveStatus["Last_Errno"]
-						lastError := slaveStatus["Last_Error"]
-						errNo, parseErr := strconv.Atoi(errNoStr)
-						if parseErr != nil {
-							slog.Warn("Failed to parse Last_Errno", "value", errNoStr, "error", parseErr, "component", "mysql")
-							errNo = -1 // Invalid, treat as issue
-						}
-						if errNo != 0 && lastError != "" {
-							issues = append(issues, fmt.Sprintf("Last_Errno: %d", errNo))
-							issues = append(issues, fmt.Sprintf("Last_Error: %s", lastError))
+						if errNoStr := slaveStatus["Last_Errno"]; errNoStr != "" {
+							if errNo, err := strconv.ParseInt(errNoStr, 10, 64); err == nil && errNo != 0 {
+								issues = append(issues, fmt.Sprintf("Last_Errno: %d", errNo))
+								if lastError := slaveStatus["Last_Error"]; lastError != "" {
+									issues = append(issues, fmt.Sprintf("Last_Error: %s", lastError))
+								}
+							} else if err != nil {
+								slog.Warn("Failed to parse Last_Errno", "value", errNoStr, "error", err, "component", "mysql")
+								issues = append(issues, fmt.Sprintf("Last_Errno: 无效值 %s", errNoStr))
+							}
 						}
 						if len(issues) > 0 {
 							hasIssue = true
 							details.WriteString("从库状态异常:\n")
 							fmt.Fprintf(&details, "| %s | %s |\n", "参数", "值")
 							fmt.Fprintf(&details, "|%s|%s|\n", "------", "------")
-							fmt.Fprintf(&details, "| %s | %s |\n", "Slave_IO_Running", slaveStatus["Slave_IO_Running"])
-							fmt.Fprintf(&details, "| %s | %s |\n", "Slave_SQL_Running", slaveStatus["Slave_SQL_Running"])
-							fmt.Fprintf(&details, "| %s | %s |\n", "Seconds_Behind_Master", slaveStatus["Seconds_Behind_Master"])
-							fmt.Fprintf(&details, "| %s | %s |\n", "Read_Master_Log_Pos", slaveStatus["Read_Master_Log_Pos"])
-							fmt.Fprintf(&details, "| %s | %s |\n", "Last_Errno", slaveStatus["Last_Errno"])
-							fmt.Fprintf(&details, "| %s | %s |\n", "Last_Error", slaveStatus["Last_Error"])
-							fmt.Fprintf(&details, "| %s | %s |\n", "Master_Log_File", slaveStatus["Master_Log_File"])
-							slog.Info("MySQL slave status issue detected", "issues", issues, "component", "mysql")
+							for _, key := range []string{"Slave_IO_Running", "Slave_SQL_Running", "Seconds_Behind_Master", "Read_Master_Log_Pos", "Last_Errno", "Last_Error", "Master_Log_File"} {
+								fmt.Fprintf(&details, "| %s | %s |\n", key, slaveStatus[key])
+							}
+							slog.Info("MySQL replica status issue detected", "issues", issues, "component", "mysql")
 						} else {
-							logToFile(fmt.Sprintf("Slave status normal: Last_Errno=0, Last_Error='', Timestamp=%s", time.Now().Format(time.RFC3339)))
+							logToFile(fmt.Sprintf("Replica status normal: Last_Errno=0, Last_Error='', Timestamp=%s", time.Now().Format(time.RFC3339)))
 						}
 					}
 				}
 			} else {
-				slog.Debug("No slave status found, likely a main node", "component", "mysql")
+				slog.Debug("No replica status found, likely a primary node", "component", "mysql")
 			}
 		}
 	}
@@ -411,14 +418,12 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 
 	// Save updated state
 	if err := saveState(state); err != nil {
-		return err
+		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "状态保存失败", fmt.Sprintf("Failed to save state: %v", err), hostIP, "alert")
 	}
 
 	// Send aggregated alert if issues detected
 	if hasIssue && details.Len() > 0 {
-		if bot != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
-		}
+		return handleError(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "数据库告警", "异常", details.String(), hostIP, "alert")
 	}
 
 	slog.Debug("No MySQL issues detected", "component", "mysql")
