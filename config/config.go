@@ -57,6 +57,8 @@ type RedisConfig struct {
 	DB              int    `mapstructure:"db"`
 	ClusterName     string `mapstructure:"cluster_name"`
 	BigKeyThreshold int64  `mapstructure:"big_key_threshold"`
+	ScanCount       int    `mapstructure:"scan_count"`   // Keys per SCAN iteration
+	ScanTimeout     string `mapstructure:"scan_timeout"` // Timeout for big key scanning
 }
 
 // MySQLConfig holds MySQL-specific configuration.
@@ -113,6 +115,8 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("redis.db", 0)
 	viper.SetDefault("redis.cluster_name", "redis-cluster")
 	viper.SetDefault("redis.big_key_threshold", 1048576) // 1MB
+	viper.SetDefault("redis.scan_count", 50)            // Keys per SCAN iteration
+	viper.SetDefault("redis.scan_timeout", "5s")         // Timeout for big key scanning
 	viper.SetDefault("mysql.enabled", false)
 	viper.SetDefault("mysql.dsn", "root:password@tcp(localhost:3306)/mysql")
 	viper.SetDefault("mysql.cluster_name", "mysql-cluster")
@@ -241,6 +245,15 @@ func (c Config) Validate() error {
 		}
 		if c.Redis.DB < 0 {
 			return fmt.Errorf("redis.db must be non-negative")
+		}
+		if c.Redis.ScanCount <= 0 {
+			return fmt.Errorf("redis.scan_count must be positive")
+		}
+		if c.Redis.ScanTimeout == "" {
+			return fmt.Errorf("redis.scan_timeout is required")
+		}
+		if _, err := time.ParseDuration(c.Redis.ScanTimeout); err != nil {
+			return fmt.Errorf("invalid redis.scan_timeout format: %w", err)
 		}
 	}
 

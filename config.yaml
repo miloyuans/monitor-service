@@ -2,7 +2,7 @@ cluster_name: "default-cluster"
 show_hostname: false
 check_interval: "30s"
 #
-monitor_web_url: "http://192.168.3.92:8080/api/alerts"
+monitor_web_url: "http://:8080/api/alerts"
 retry_times: 3
 retry_delay: "5s"
 # minutes
@@ -20,12 +20,14 @@ rabbitmq:
   password: "guest"
   cluster_name: "rabbitmq-cluster"
 redis:
-  enabled: false
+  enabled: true
   addr: "localhost:6379"
   password: ""
   db: 0
   cluster_name: "redis-cluster"
   big_key_threshold: 1048576
+  scan_count: 50
+  scan_timeout: "5s"
 mysql:
   enabled: false
   dsn: "root:password@tcp(localhost:3306)/mysql"
