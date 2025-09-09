@@ -236,61 +236,70 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 	var errors []error
 	var errMutex sync.Mutex
 
+	// Define a generic monitor function type
+	type monitorFunc func(context.Context, *alert.AlertBot, map[string]time.Time, *sync.Mutex, time.Duration) error
+
 	monitors := []struct {
 		name    string
 		enabled bool
 		bot     *alert.AlertBot
-		fn      func(context.Context, interface{}, *alert.AlertBot, map[string]time.Time, *sync.Mutex, time.Duration) error
-		cfg     interface{}
+		fn      monitorFunc
 	}{
 		{
 			name:    "General",
 			enabled: cfg.Monitoring.Enabled,
 			bot:     globalBot,
-			fn:      monitor.General,
-			cfg:     cfg.Monitoring,
+			fn: func(ctx context.Context, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.General(ctx, cfg.Monitoring, bot, cache, mutex, duration)
+			},
 		},
 		{
 			name:    "RabbitMQ",
 			enabled: cfg.RabbitMQ.Enabled,
 			bot:     globalBot,
-			fn:      monitor.RabbitMQ,
-			cfg:     cfg.RabbitMQ,
+			fn: func(ctx context.Context, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.RabbitMQ(ctx, cfg.RabbitMQ, bot, cache, mutex, duration)
+			},
 		},
 		{
 			name:    "Redis",
 			enabled: cfg.Redis.Enabled,
 			bot:     globalBot,
-			fn:      monitor.Redis,
-			cfg:     cfg.Redis,
+			fn: func(ctx context.Context, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.Redis(ctx, cfg.Redis, bot, cache, mutex, duration)
+			},
 		},
 		{
 			name:    "MySQL",
 			enabled: cfg.MySQL.Enabled,
 			bot:     mysqlBot,
-			fn:      monitor.MySQL,
-			cfg:     cfg.MySQL,
+			fn: func(ctx context.Context, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.MySQL(ctx, cfg.MySQL, bot, cache, mutex, duration)
+			},
 		},
 		{
 			name:    "Nacos",
 			enabled: cfg.Nacos.Enabled,
 			bot:     globalBot,
-			fn:      monitor.Nacos,
-			cfg:     cfg.Nacos,
+			fn: func(ctx context.Context, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.Nacos(ctx, cfg.Nacos, bot, cache, mutex, duration)
+			},
 		},
 		{
 			name:    "Host",
 			enabled: cfg.HostMonitoring.Enabled,
 			bot:     globalBot,
-			fn:      monitor.Host,
-			cfg:     cfg.HostMonitoring,
+			fn: func(ctx context.Context, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.Host(ctx, cfg.HostMonitoring, bot, cache, mutex, duration)
+			},
 		},
 		{
 			name:    "System",
 			enabled: cfg.SystemMonitoring.Enabled,
 			bot:     globalBot,
-			fn:      monitor.System,
-			cfg:     cfg.SystemMonitoring,
+			fn: func(ctx context.Context, bot *alert.AlertBot, cache map[string]time.Time, mutex *sync.Mutex, duration time.Duration) error {
+				return monitor.System(ctx, cfg.SystemMonitoring, bot, cache, mutex, duration)
+			},
 		},
 	}
 
@@ -311,7 +320,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 		}
 
 		wg.Add(1)
-		go func(name string, fn func(context.Context, interface{}, *alert.AlertBot, map[string]time.Time, *sync.Mutex, time.Duration) error, cfg interface{}, bot *alert.AlertBot) {
+		go func(name string, fn monitorFunc, bot *alert.AlertBot) {
 			defer wg.Done()
 			taskCtx, taskCancel := context.WithTimeout(ctx, checkInterval)
 			defer taskCancel()
@@ -320,7 +329,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			cache := alertCache[name]
 			cacheMutex.Unlock()
 
-			if err := fn(taskCtx, cfg, bot, cache, cacheMutex, alertSilenceDuration); err != nil {
+			if err := fn(taskCtx, bot, cache, cacheMutex, alertSilenceDuration); err != nil {
 				if name == "System" && strings.Contains(err.Error(), "system issues detected") {
 					slog.Info("System monitor detected expected issues", "monitor", name, "error", err, "component", "main")
 				} else {
@@ -332,7 +341,7 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 			} else {
 				slog.Debug("Monitoring task completed successfully", "monitor", name, "component", "main")
 			}
-		}(m.name, m.fn, m.cfg, m.bot)
+		}(m.name, m.fn, m.bot)
 	}
 	wg.Wait()
 
