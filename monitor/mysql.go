@@ -263,7 +263,7 @@ func MySQL(ctx context.Context, cfg config.MySQLConfig, bot *alert.AlertBot, ale
 	}
 
 	// Check replica status
-	if cfg.IsReplica {
+	if cfg.IsSlave {
 		rows, err := db.QueryContext(ctx, "SHOW SLAVE STATUS")
 		if err != nil {
 			slog.Warn("Failed to query replica status", "error", err, "component", "mysql")
