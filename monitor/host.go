@@ -41,7 +41,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		slog.Error("Failed to get processes", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取进程列表: %v", err))
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 
 	// CPU usage
@@ -50,7 +50,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		slog.Error("Failed to get CPU usage", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取 CPU 使用率: %v", err))
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	var cpuAvg float64
 	for _, p := range cpuPercents {
@@ -81,7 +81,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		slog.Error("Failed to get memory usage", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取内存使用率: %v", err))
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	remainingPercent := 100.0 - vm.UsedPercent
 	remainingThreshold := 100.0 - cfg.MemThreshold
@@ -106,7 +106,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		slog.Error("Failed to get initial network IO", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取网络 IO: %v", err))
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	select {
 	case <-time.After(time.Second):
@@ -119,7 +119,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		slog.Error("Failed to get final network IO", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取网络 IO: %v", err))
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	var netBytesSent, netBytesRecv float64
 	for i, io1 := range netIO1 {
@@ -148,7 +148,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		slog.Error("Failed to get initial disk IO", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取磁盘 IO: %v", err))
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	select {
 	case <-time.After(time.Second):
@@ -161,7 +161,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		slog.Error("Failed to get final disk IO", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取磁盘 IO: %v", err))
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	var diskRead, diskWrite float64
 	for name, io1 := range diskIO1 {
@@ -190,7 +190,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		slog.Error("Failed to get disk usage", "path", "/", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取磁盘使用率: %v", err))
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	diskStatus := "正常✅"
 	diskTopDirsMsg := ""
@@ -209,14 +209,16 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if hasIssue {
 		slog.Info("Host resource issues detected", "cpu", cpuStatus, "memory", memStatus, "net_io", netIOStatus, "disk_io", diskIOStatus, "disk_io_rate", diskIORate, "disk", diskStatus, "component", "host")
 		msg := bot.FormatAlert("主机告警", "服务异常", details.String(), hostIP, "alert")
-		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", msg)
+		return sendHostAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	slog.Debug("No host resource issues detected", "component", "host")
 	return nil
 }
 
 // sendHostAlert sends a deduplicated Telegram alert for the Host module.
-func sendHostAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, message string) error {
+// extra: additional alert message (optional).
+// metadata: additional key-value data for the alert (optional).
+func sendHostAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, extra string, metadata map[string]interface{}) error {
 	hash, err := util.MD5Hash(details)
 	if err != nil {
 		slog.Error("Failed to generate alert hash", "error", err, "component", "host")
@@ -238,12 +240,12 @@ func sendHostAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[stri
 		}
 	}
 	cacheMutex.Unlock()
-	slog.Debug("Sending alert", "message", message, "details", details, "component", "host")
-	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType); err != nil {
-		slog.Error("Failed to send alert", "error", err, "message", message, "details", details, "component", "host")
+	slog.Debug("Sending alert", "service", serviceName, "event", eventName, "details", details, "component", "host")
+	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType, extra, metadata); err != nil {
+		slog.Error("Failed to send alert", "error", err, "service", serviceName, "event", eventName, "details", details, "component", "host")
 		return fmt.Errorf("failed to send alert: %w", err)
 	}
-	slog.Info("Sent alert", "message", message, "details", details, "component", "host")
+	slog.Info("Sent alert", "service", serviceName, "event", eventName, "details", details, "component", "host")
 	return nil
 }
 
