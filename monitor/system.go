@@ -96,7 +96,8 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		}
 		if err := updateLastCleanup(lastCleanupFile); err != nil {
 			slog.Error("Failed to update last cleanup time", "error", err, "component", "system")
-			details.WriteString(fmt.Sprintf("Failed to update last cleanup time: %v", err)
+			details.WriteString(fmt.Sprintf("Failed to update last cleanup time: %v", err))
+			//details.WriteString(fmt.Sprintf("Failed to update last cleanup time: %v", err)
 			if bot != nil {
 				msg := bot.FormatAlert("System Alert", "Service Error", details.String(), hostIP, "alert")
 				return sendSystemAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", details.String(), hostIP, "alert", msg)
