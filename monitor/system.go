@@ -67,10 +67,10 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	// Check and cleanup historical files every 30 days
 	if shouldCleanup(lastCleanupFile, 30*24*time.Hour) {
 		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to cleanup historical files: %v", err), hostIP, "alert", "system", nil)
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to cleanup historical files: %v", err), hostIP, "alert", "system", nil)
 		}
 		if err := updateLastCleanup(lastCleanupFile); err != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to update last cleanup time: %v", err), hostIP, "alert", "system", nil)
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to update last cleanup time: %v", err), hostIP, "alert", "system", nil)
 		}
 	}
 
@@ -92,18 +92,18 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	// Monitor users
 	currentUsers, err := getCurrentUsers()
 	if err != nil {
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to get current users: %v", err), hostIP, "alert", "system", nil)
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to get current users: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Retrieved current users", "count", len(currentUsers), "component", "system")
 	initialUsers, err := loadInitialUsers(userInitialFile)
 	if err != nil {
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to load initial users: %v", err), hostIP, "alert", "system", nil)
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to load initial users: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Loaded initial users", "count", len(initialUsers), "component", "system")
 	if len(initialUsers) == 0 {
 		slog.Info("First run: initializing user file", "component", "system")
 		if err := saveUsers(userInitialFile, currentUsers); err != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to save initial users: %v", err), hostIP, "alert", "system", nil)
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to save initial users: %v", err), hostIP, "alert", "system", nil)
 		}
 	} else {
 		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
@@ -116,24 +116,34 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 				fmt.Fprintf(&details, "**❌⊖Removed Users⊖**:\n- %s\n", strings.Join(removedUsers, "\n- "))
 			}
 			slog.Info("Detected user changes", "added_users", len(addedUsers), "removed_users", len(removedUsers), "component", "system")
+			// Log user changes
+			var addedAny []any
+			for _, u := range addedUsers {
+				addedAny = append(addedAny, u)
+			}
+			var removedAny []any
+			for _, u := range removedUsers {
+				removedAny = append(removedAny, u)
+			}
+			logIgnoredChange(changeLogFile, "user", addedAny, removedAny)
 		}
 	}
 
 	// Monitor processes
 	currentProcesses, err := getCurrentProcesses(ctx)
 	if err != nil {
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to get current processes: %v", err), hostIP, "alert", "system", nil)
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to get current processes: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Retrieved current processes", "count", len(currentProcesses), "component", "system")
 	initialProcesses, err := loadInitialProcesses(processInitialFile)
 	if err != nil {
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to load initial processes: %v", err), hostIP, "alert", "system", nil)
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to load initial processes: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Loaded initial processes", "count", len(initialProcesses), "component", "system")
 	if len(initialProcesses) == 0 {
 		slog.Info("First run: initializing process file", "component", "system")
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to save initial processes: %v", err), hostIP, "alert", "system", nil)
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to save initial processes: %v", err), hostIP, "alert", "system", nil)
 		}
 	} else {
 		addedProcesses, removedProcesses := diffProcesses(currentProcesses, initialProcesses)
@@ -143,10 +153,10 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		if len(filteredAdded) > 0 || len(filteredRemoved) > 0 {
 			hasIssue = true
 			if len(filteredAdded) > 0 {
-				fmt.Fprintf(&details, "**✅⊕Added Processes⊕**:\n%s\n", formatProcesses(filteredAdded))
+				fmt.Fprintf(&details, "**✅⊕增加的进程⊕**:\n%s\n", formatProcesses(filteredAdded))
 			}
 			if len(filteredRemoved) > 0 {
-				fmt.Fprintf(&details, "**❌⊖Removed Processes⊖**:\n%s\n", formatProcesses(filteredRemoved))
+				fmt.Fprintf(&details, "**❌⊖减少的进程⊖**:\n%s\n", formatProcesses(filteredRemoved))
 			}
 			slog.Info("Detected process changes (after filtering)", "added_processes", len(filteredAdded), "removed_processes", len(filteredRemoved), "component", "system")
 		}
@@ -168,13 +178,15 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	if needsReinit {
 		slog.Info("Reinitializing system monitoring due to file size limit", "component", "system")
 		if err := reinitializeSystemMonitoring(userInitialFile, processInitialFile, currentUsers, currentProcesses, changeLogFile, processLogFile); err != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Service Error", fmt.Sprintf("Failed to reinitialize system monitoring: %v", err), hostIP, "alert", "system", nil)
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to reinitialize system monitoring: %v", err), hostIP, "alert", "system", nil)
 		}
 	}
 
-	// Send alert if issues detected
+	// Send alert if issues detected with a unique alert key for this cycle
 	if hasIssue {
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "System Alert", "Change Detected", details.String(), hostIP, "alert", "system", nil)
+		// Generate a unique alert key for this cycle to avoid reusing old cached content
+		alertKey := fmt.Sprintf("system_change_%s_%d", hostIP, time.Now().UnixNano())
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", "system", map[string]string{"alert_key": alertKey})
 	}
 
 	slog.Debug("No system issues detected", "component", "system")
