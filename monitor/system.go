@@ -60,10 +60,6 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	const lastCleanupFile = ".lastCleanup"
 	filesToCheck := []string{changeLogFile, processLogFile}
 
-	// Initialize details for alert message
-	var details strings.Builder
-	hasIssue := false
-
 	// Check and cleanup historical files every 30 days
 	if shouldCleanup(lastCleanupFile, 30*24*time.Hour) {
 		if err := cleanupHistoricalFiles(15 * 24 * time.Hour); err != nil {
@@ -100,34 +96,6 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to load initial users: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Loaded initial users", "count", len(initialUsers), "component", "system")
-	if len(initialUsers) == 0 {
-		slog.Info("First run: initializing user file", "component", "system")
-		if err := saveUsers(userInitialFile, currentUsers); err != nil {
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to save initial users: %v", err), hostIP, "alert", "system", nil)
-		}
-	} else {
-		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
-		if len(addedUsers) > 0 || len(removedUsers) > 0 {
-			hasIssue = true
-			if len(addedUsers) > 0 {
-				fmt.Fprintf(&details, "**✅⊕Added Users⊕**:\n- %s\n", strings.Join(addedUsers, "\n- "))
-			}
-			if len(removedUsers) > 0 {
-				fmt.Fprintf(&details, "**❌⊖Removed Users⊖**:\n- %s\n", strings.Join(removedUsers, "\n- "))
-			}
-			slog.Info("Detected user changes", "added_users", len(addedUsers), "removed_users", len(removedUsers), "component", "system")
-			// Log user changes
-			var addedAny []any
-			for _, u := range addedUsers {
-				addedAny = append(addedAny, u)
-			}
-			var removedAny []any
-			for _, u := range removedUsers {
-				removedAny = append(removedAny, u)
-			}
-			logIgnoredChange(changeLogFile, "user", addedAny, removedAny)
-		}
-	}
 
 	// Monitor processes
 	currentProcesses, err := getCurrentProcesses(ctx)
@@ -140,38 +108,98 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to load initial processes: %v", err), hostIP, "alert", "system", nil)
 	}
 	slog.Debug("Loaded initial processes", "count", len(initialProcesses), "component", "system")
+
+	// Initialize files if first run
+	if len(initialUsers) == 0 {
+		slog.Info("First run: initializing user file", "component", "system")
+		if err := saveUsers(userInitialFile, currentUsers); err != nil {
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to save initial users: %v", err), hostIP, "alert", "system", nil)
+		}
+	}
 	if len(initialProcesses) == 0 {
 		slog.Info("First run: initializing process file", "component", "system")
 		if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
 			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "Service Error", fmt.Sprintf("Failed to save initial processes: %v", err), hostIP, "alert", "system", nil)
 		}
-	} else {
+	}
+
+	// Check for user changes
+	var userDetails, processDetails strings.Builder
+	userHasIssue, processHasIssue := false, false
+
+	if len(initialUsers) > 0 {
+		addedUsers, removedUsers := diffStrings(currentUsers, initialUsers)
+		if len(addedUsers) > 0 || len(removedUsers) > 0 {
+			userHasIssue = true
+			if len(addedUsers) > 0 {
+				fmt.Fprintf(&userDetails, "**✅⊕Added Users⊕**:\n- %s\n", strings.Join(addedUsers, "\n- "))
+			}
+			if len(removedUsers) > 0 {
+				fmt.Fprintf(&userDetails, "**❌⊖Removed Users⊖**:\n- %s\n", strings.Join(removedUsers, "\n- "))
+			}
+			slog.Info("Detected user changes", "added_users", len(addedUsers), "removed_users", len(removedUsers), "component", "system")
+			// Log user changes
+			var addedAny, removedAny []any
+			for _, u := range addedUsers {
+				addedAny = append(addedAny, u)
+			}
+			for _, u := range removedUsers {
+				removedAny = append(removedAny, u)
+			}
+			logChange(changeLogFile, "user", addedAny, removedAny)
+		}
+	}
+
+	// Check for process changes
+	if len(initialProcesses) > 0 {
 		addedProcesses, removedProcesses := diffProcesses(currentProcesses, initialProcesses)
-		// Filter processes based on ignore patterns
 		filteredAdded, ignoredAdded := filterProcesses(addedProcesses, cfg.ProcessIgnorePatterns)
 		filteredRemoved, ignoredRemoved := filterProcesses(removedProcesses, cfg.ProcessIgnorePatterns)
 		if len(filteredAdded) > 0 || len(filteredRemoved) > 0 {
-			hasIssue = true
+			processHasIssue = true
 			if len(filteredAdded) > 0 {
-				fmt.Fprintf(&details, "**✅⊕增加的进程⊕**:\n%s\n", formatProcesses(filteredAdded))
+				fmt.Fprintf(&processDetails, "**✅⊕增加的进程⊕**:\n%s\n", formatProcesses(filteredAdded))
 			}
 			if len(filteredRemoved) > 0 {
-				fmt.Fprintf(&details, "**❌⊖减少的进程⊖**:\n%s\n", formatProcesses(filteredRemoved))
+				fmt.Fprintf(&processDetails, "**❌⊖减少的进程⊖**:\n%s\n", formatProcesses(filteredRemoved))
 			}
 			slog.Info("Detected process changes (after filtering)", "added_processes", len(filteredAdded), "removed_processes", len(filteredRemoved), "component", "system")
 		}
 		if len(ignoredAdded) > 0 || len(ignoredRemoved) > 0 {
-			var addedAny []any
+			var addedAny, removedAny []any
 			for _, p := range ignoredAdded {
 				addedAny = append(addedAny, p)
 			}
-			var removedAny []any
 			for _, p := range ignoredRemoved {
 				removedAny = append(removedAny, p)
 			}
-			logIgnoredChange(changeLogFile, "process", addedAny, removedAny)
+			logChange(changeLogFile, "process", addedAny, removedAny)
 			slog.Debug("Logged ignored process changes", "ignored_added", len(ignoredAdded), "ignored_removed", len(ignoredRemoved), "component", "system")
 		}
+	}
+
+	// Send separate alerts for user and process changes
+	if userHasIssue {
+		alertKey := fmt.Sprintf("user_change_%s_%d", hostIP, time.Now().UnixNano())
+		if err := util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "用户变更", userDetails.String(), hostIP, "alert", "system", map[string]interface{}{"alert_key": alertKey, "destination": "telegram"}); err != nil {
+			slog.Error("Failed to send user change alert", "error", err, "component", "system")
+			return err
+		}
+	}
+	if processHasIssue {
+		alertKey := fmt.Sprintf("process_change_%s_%d", hostIP, time.Now().UnixNano())
+		if err := util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", processDetails.String(), hostIP, "alert", "system", map[string]interface{}{"alert_key": alertKey, "destination": "telegram"}); err != nil {
+			slog.Error("Failed to send process change alert", "error", err, "component", "system")
+			return err
+		}
+	}
+
+	// Persist current state for next cycle
+	if err := saveUsers(userInitialFile, currentUsers); err != nil {
+		slog.Error("Failed to update initial users", "error", err, "component", "system")
+	}
+	if err := saveProcesses(processInitialFile, currentProcesses); err != nil {
+		slog.Error("Failed to update initial processes", "error", err, "component", "system")
 	}
 
 	// Reinitialize if needed
@@ -182,16 +210,34 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 		}
 	}
 
-	// Send alert if issues detected with a unique alert key for this cycle
-	if hasIssue {
-		// Generate a unique alert key for this cycle to avoid reusing old cached content
-		alertKey := fmt.Sprintf("system_change_%s_%d", hostIP, time.Now().UnixNano())
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", "system", map[string]interface{}{"alert_key": alertKey})
-		//return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "系统告警", "进程变更", details.String(), hostIP, "alert", "system", map[string]string{"alert_key": alertKey})
+	if !userHasIssue && !processHasIssue {
+		slog.Debug("No system issues detected", "component", "system")
 	}
-
-	slog.Debug("No system issues detected", "component", "system")
 	return nil
+}
+
+// logChange logs changes to the change log file.
+func logChange(changeLogFile, changeType string, added, removed []any) {
+	entry := ChangeLogEntry{
+		Timestamp: time.Now(),
+		Type:      changeType,
+		Added:     added,
+		Removed:   removed,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		slog.Error("Failed to marshal change entry", "error", err, "component", "system")
+		return
+	}
+	f, err := os.OpenFile(changeLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		slog.Error("Failed to open change log file", "file", changeLogFile, "error", err, "component", "system")
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		slog.Error("Failed to write change entry", "error", err, "component", "system")
+	}
 }
 
 // filterProcesses filters processes based on ignore patterns.
@@ -220,30 +266,6 @@ func formatProcesses(processes []ProcessInfo) string {
 		fmt.Fprintf(&sb, "- %s (PID: %d, CMD: %s)\n", p.User, p.PID, p.CMD)
 	}
 	return sb.String()
-}
-
-// logIgnoredChange logs ignored changes to the change log file.
-func logIgnoredChange(changeLogFile, changeType string, added, removed []any) {
-	entry := ChangeLogEntry{
-		Timestamp: time.Now(),
-		Type:      changeType,
-		Added:     added,
-		Removed:   removed,
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		slog.Error("Failed to marshal ignored change entry", "error", err, "component", "system")
-		return
-	}
-	f, err := os.OpenFile(changeLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		slog.Error("Failed to open change log file", "file", changeLogFile, "error", err, "component", "system")
-		return
-	}
-	defer f.Close()
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		slog.Error("Failed to write ignored change entry", "error", err, "component", "system")
-	}
 }
 
 // getCurrentUsers retrieves the current list of users.
