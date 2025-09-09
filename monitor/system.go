@@ -216,33 +216,15 @@ func System(ctx context.Context, cfg config.SystemConfig, bot *alert.AlertBot, a
 	return nil
 }
 
-// logChange logs changes to the change log file.
-func logChange(changeLogFile, changeType string, added, removed []any) {
-	entry := ChangeLogEntry{
-		Timestamp: time.Now(),
-		Type:      changeType,
-		Added:     added,
-		Removed:   removed,
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		slog.Error("Failed to marshal change entry", "error", err, "component", "system")
-		return
-	}
-	f, err := os.OpenFile(changeLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		slog.Error("Failed to open change log file", "file", changeLogFile, "error", err, "component", "system")
-		return
-	}
-	defer f.Close()
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		slog.Error("Failed to write change entry", "error", err, "component", "system")
-	}
-}
-
-// filterProcesses filters processes based on ignore patterns.
+// filterProcesses filters processes based on ignore patterns and empty CMD.
 func filterProcesses(processes []ProcessInfo, ignorePatterns []string) (filtered, ignored []ProcessInfo) {
 	for _, p := range processes {
+		// Filter out processes with empty CMD
+		if p.CMD == "" {
+			ignored = append(ignored, p)
+			continue
+		}
+		// Apply existing ignore patterns
 		ignoredFlag := false
 		for _, pattern := range ignorePatterns {
 			if matched, _ := regexp.MatchString(convertPatternToRegex(pattern), p.CMD); matched {
@@ -266,6 +248,30 @@ func formatProcesses(processes []ProcessInfo) string {
 		fmt.Fprintf(&sb, "- %s (PID: %d, CMD: %s)\n", p.User, p.PID, p.CMD)
 	}
 	return sb.String()
+}
+
+// logChange logs changes to the change log file.
+func logChange(changeLogFile, changeType string, added, removed []any) {
+	entry := ChangeLogEntry{
+		Timestamp: time.Now(),
+		Type:      changeType,
+		Added:     added,
+		Removed:   removed,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		slog.Error("Failed to marshal change entry", "error", err, "component", "system")
+		return
+	}
+	f, err := os.OpenFile(changeLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		slog.Error("Failed to open change log file", "file", changeLogFile, "error", err, "component", "system")
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		slog.Error("Failed to write change entry", "error", err, "component", "system")
+	}
 }
 
 // getCurrentUsers retrieves the current list of users.
