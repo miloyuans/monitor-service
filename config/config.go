@@ -72,6 +72,7 @@ type MySQLConfig struct {
 	DeadlockThreshold      int64          `mapstructure:"deadlock_threshold"`
 	SlowQueryThreshold     int64          `mapstructure:"slow_query_threshold"`
 	SecondsBehindThreshold int64          `mapstructure:"seconds_behind_threshold"`
+	IsSlave                bool           `mapstructure:"is_slave"`
 	Telegram               TelegramConfig `mapstructure:"telegram"`
 }
 
@@ -128,6 +129,7 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("mysql.deadlock_threshold", 1)
 	viper.SetDefault("mysql.slow_query_threshold", 1)
 	viper.SetDefault("mysql.seconds_behind_threshold", 1)
+	viper.SetDefault("mysql.is_slave", false)
 	viper.SetDefault("mysql.telegram.bot_token", "")
 	viper.SetDefault("mysql.telegram.chat_id", 0)
 	viper.SetDefault("nacos.enabled", false)
