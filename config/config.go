@@ -1,11 +1,13 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 )
 
@@ -59,6 +61,7 @@ type RedisConfig struct {
 	BigKeyThreshold int64  `mapstructure:"big_key_threshold"`
 	ScanCount       int    `mapstructure:"scan_count"`   // Keys per SCAN iteration
 	ScanTimeout     string `mapstructure:"scan_timeout"` // Timeout for big key scanning
+	MaxScanKeys     int    `mapstructure:"max_scan_keys"` // Max keys to scan per cycle
 }
 
 // MySQLConfig holds MySQL-specific configuration.
@@ -94,7 +97,8 @@ type HostConfig struct {
 
 // SystemConfig holds system monitoring configuration.
 type SystemConfig struct {
-	Enabled bool `mapstructure:"enabled"`
+	Enabled                 bool     `mapstructure:"enabled"`
+	ProcessIgnorePatterns   []string `mapstructure:"process_ignore_patterns"` // Patterns to ignore for process alerts
 }
 
 // LoadConfig loads the configuration from the specified YAML file.
@@ -117,6 +121,7 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("redis.big_key_threshold", 1048576) // 1MB
 	viper.SetDefault("redis.scan_count", 50)            // Keys per SCAN iteration
 	viper.SetDefault("redis.scan_timeout", "5s")         // Timeout for big key scanning
+	viper.SetDefault("redis.max_scan_keys", 1000)        // Max keys to scan per cycle
 	viper.SetDefault("mysql.enabled", false)
 	viper.SetDefault("mysql.dsn", "root:password@tcp(localhost:3306)/mysql")
 	viper.SetDefault("mysql.cluster_name", "mysql-cluster")
@@ -138,6 +143,7 @@ func LoadConfig(path string) (Config, error) {
 	viper.SetDefault("host_monitoring.net_io_threshold", 1.0)   // 1 GB/s
 	viper.SetDefault("host_monitoring.disk_io_threshold", 1.0) // 1 GB/s
 	viper.SetDefault("system_monitoring.enabled", false)
+	viper.SetDefault("system_monitoring.process_ignore_patterns", []string{})
 	viper.SetDefault("cluster_name", "default-cluster")
 	viper.SetDefault("show_hostname", false)
 	viper.SetDefault("alert_silence_duration", 5) // minutes
@@ -255,6 +261,20 @@ func (c Config) Validate() error {
 		if _, err := time.ParseDuration(c.Redis.ScanTimeout); err != nil {
 			return fmt.Errorf("invalid redis.scan_timeout format: %w", err)
 		}
+		if c.Redis.MaxScanKeys <= 0 {
+			return fmt.Errorf("redis.max_scan_keys must be positive")
+		}
+		// Warn if DB is non-zero and Redis is in cluster mode
+		client := redis.NewClient(&redis.Options{
+			Addr:     c.Redis.Addr,
+			Password: c.Redis.Password,
+			DB:       0,
+		})
+		defer client.Close()
+		info, err := client.ClusterInfo(context.Background()).Result()
+		if err == nil && info != "" && c.Redis.DB != 0 {
+			slog.Warn("redis.db is ignored in cluster mode", "db", c.Redis.DB, "component", "config")
+		}
 	}
 
 	// Validate MySQL configuration
@@ -325,7 +345,7 @@ func (c Config) Validate() error {
 
 	// System monitoring validation
 	if c.SystemMonitoring.Enabled {
-		// No specific validation required yet
+		// No specific validation required for process_ignore_patterns
 	}
 
 	return nil

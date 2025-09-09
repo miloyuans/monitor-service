@@ -2,9 +2,12 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -85,7 +88,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 			return err
 		}
 	}
-	hitRatio := metrics["keyspace_hits"].(int64) / (metrics["keyspace_hits"].(int64) + metrics["keyspace_misses"].(int64))
+	hitRatio := float64(metrics["keyspace_hits"].(int64)) / float64(metrics["keyspace_hits"].(int64) + metrics["keyspace_misses"].(int64))
 	if hitRatio < 0.9 {
 		details := fmt.Sprintf("Low cache hit ratio: %.2f", hitRatio)
 		slog.Info("Low cache hit ratio detected", "hit_ratio", hitRatio, "component", "redis")
@@ -166,7 +169,7 @@ func Redis(ctx context.Context, cfg config.RedisConfig, bot *alert.AlertBot, ale
 
 	slog.Info("Sampling for big keys", "threshold_bytes", cfg.BigKeyThreshold, "sample_count", sampleCount, "timeout", scanTimeout.String(), "component", "redis")
 	if isCluster {
-		// Cluster mode: Sample on each master (DB 0 only)
+		// Cluster mode: Sample on DB 0 across all masters
 		scannedDBs = append(scannedDBs, "0 (cluster mode)")
 		err = sampleBigKeys(scanCtx, client, cfg, sampleCount, &bigKeys, &bigKeysCount)
 	} else {
