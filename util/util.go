@@ -6,8 +6,39 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+    "monitor-service/alert"
 )
 
+// SendAlert sends a deduplicated alert with consistent logging.
+func SendAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, extra string, metadata map[string]interface{}) error {
+    hash, err := MD5Hash(details)
+    if err != nil {
+        slog.Error("Failed to generate alert hash", "error", err, "component", serviceName)
+        return fmt.Errorf("failed to generate alert hash: %w", err)
+    }
+    cacheMutex.Lock()
+    now := time.Now()
+    if timestamp, ok := alertCache[hash]; ok && now.Sub(timestamp) < alertSilenceDuration {
+        slog.Info("Skipping duplicate alert", "hash", hash, "component", serviceName)
+        cacheMutex.Unlock()
+        return nil
+    }
+    alertCache[hash] = now
+    for h, t := range alertCache {
+        if now.Sub(t) >= alertSilenceDuration {
+            delete(alertCache, h)
+            slog.Debug("Removed expired alert cache entry", "hash", h, "component", serviceName)
+        }
+    }
+    cacheMutex.Unlock()
+    slog.Debug("Sending alert", "service", serviceName, "event", eventName, "details", details, "component", serviceName)
+    if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType, extra, metadata); err != nil {
+        slog.Error("Failed to send alert", "error", err, "service", serviceName, "event", eventName, "details", details, "component", serviceName)
+        return fmt.Errorf("failed to send alert: %w", err)
+    }
+    slog.Info("Sent alert", "service", serviceName, "event", eventName, "details", details, "component", serviceName)
+    return nil
+}
 // GetPrivateIP retrieves the first non-loopback IPv4 address in private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
 func GetPrivateIP() (string, error) {
 	addrs, err := net.InterfaceAddrs()
