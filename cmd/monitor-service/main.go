@@ -42,6 +42,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize alert cache for startup alerts
+	alertCache := make(map[string]map[string]time.Time)
+	var cacheMutex sync.Mutex
+	alertSilenceDuration := time.Duration(cfg.AlertSilenceDuration) * time.Minute
+
 	// Initialize global alert bot
 	var globalBot *alert.AlertBot
 	if cfg.IsAnyMonitoringEnabled() && (cfg.Telegram.BotToken != "" && cfg.Telegram.ChatID != 0 || cfg.MonitorWebURL != "") {
@@ -82,8 +87,17 @@ func main() {
 		hostIP = "unknown"
 	}
 
-	// Send startup alerts
-	if err := sendStartupShutdownAlert(ctx, cfg, globalBot, mysqlBot, hostIP, "startup"); err != nil {
+	// Send startup alerts with deduplication
+	cacheMutex.Lock()
+	if alertCache["Startup"] == nil {
+		alertCache["Startup"] = make(map[string]time.Time)
+	}
+	cacheMutex.Unlock()
+	destinations := []string{"telegram"}
+	if cfg.MonitorWebURL != "" {
+		destinations = append(destinations, "web")
+	}
+	if err := sendStartupShutdownAlert(ctx, cfg, globalBot, mysqlBot, hostIP, "startup", alertCache["Startup"], &cacheMutex, alertSilenceDuration, destinations); err != nil {
 		slog.Error("Failed to send startup alerts", "error", err, "component", "main")
 	}
 
@@ -96,7 +110,7 @@ func main() {
 		slog.Error("Invalid check interval", "interval", cfg.CheckInterval, "error", err, "component", "main")
 		if globalBot != nil {
 			startupMsg := globalBot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert")
-			if err := globalBot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert", "general", nil); err != nil {
+			if err := globalBot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), "异常", fmt.Sprintf("无效的检查间隔: %v", err), hostIP, "alert", "general", map[string]interface{}{"destinations": destinations}); err != nil {
 				slog.Error("Failed to send alert for invalid check interval", "error", err, "message", startupMsg, "component", "main")
 			}
 		}
@@ -110,7 +124,7 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		slog.Info("Received signal, initiating shutdown", "signal", ctx.Err(), "component", "main")
-		if err := sendStartupShutdownAlert(context.Background(), cfg, globalBot, mysqlBot, hostIP, "shutdown"); err != nil {
+		if err := sendStartupShutdownAlert(context.Background(), cfg, globalBot, mysqlBot, hostIP, "shutdown", alertCache["Startup"], &cacheMutex, alertSilenceDuration, destinations); err != nil {
 			slog.Error("Failed to send shutdown alerts", "error", err, "component", "main")
 		}
 	}()
@@ -118,10 +132,6 @@ func main() {
 	// Start monitoring
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-
-	alertCache := make(map[string]map[string]time.Time)
-	var cacheMutex sync.Mutex
-	alertSilenceDuration := time.Duration(cfg.AlertSilenceDuration) * time.Minute
 
 	for {
 		select {
@@ -134,9 +144,21 @@ func main() {
 	}
 }
 
-// sendStartupShutdownAlert sends startup or shutdown alerts for global and MySQL bots.
-func sendStartupShutdownAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot *alert.AlertBot, hostIP, alertType string) error {
+// sendStartupShutdownAlert sends startup or shutdown alerts for global and MySQL bots with deduplication.
+func sendStartupShutdownAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot *alert.AlertBot, hostIP, alertType string, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, destinations []string) error {
 	var errors []error
+
+	// Check if alert should be silenced
+	cacheMutex.Lock()
+	alertKey := fmt.Sprintf("%s_%s", alertType, hostIP)
+	lastAlertTime, exists := alertCache[alertKey]
+	if exists && time.Since(lastAlertTime) < alertSilenceDuration {
+		slog.Debug("Skipping alert due to silence duration", "alert_type", alertType, "host_ip", hostIP, "last_alert", lastAlertTime, "component", "main")
+		cacheMutex.Unlock()
+		return nil
+	}
+	alertCache[alertKey] = time.Now()
+	cacheMutex.Unlock()
 
 	// Global alert
 	if cfg.IsAnyMonitoringEnabled() && globalBot != nil {
@@ -175,11 +197,11 @@ func sendStartupShutdownAlert(ctx context.Context, cfg config.Config, globalBot,
 			details.WriteString("MySQL 使用独立 Telegram 通知\n")
 		}
 		startupMsg := globalBot.FormatAlert(fmt.Sprintf("Monitor Service %s", cfg.ClusterName), alertType, details.String(), hostIP, alertType)
-		if err := globalBot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), alertType, details.String(), hostIP, alertType, "general", nil); err != nil {
+		if err := globalBot.SendAlert(ctx, fmt.Sprintf("Monitor Service %s", cfg.ClusterName), alertType, details.String(), hostIP, alertType, "general", map[string]interface{}{"destinations": destinations, "alert_key": alertKey}); err != nil {
 			slog.Error(fmt.Sprintf("Failed to send global %s alert", alertType), "error", err, "message", startupMsg, "component", "main")
 			errors = append(errors, err)
 		} else {
-			slog.Info(fmt.Sprintf("Sent global %s alert", alertType), "message", startupMsg, "component", "main")
+			slog.Info(fmt.Sprintf("Sent global %s alert to destinations %v", alertType, destinations), "message", startupMsg, "component", "main")
 		}
 	}
 
@@ -192,11 +214,12 @@ func sendStartupShutdownAlert(ctx context.Context, cfg config.Config, globalBot,
 			message += "停止"
 		}
 		startupMsg := mysqlBot.FormatAlert("数据库监控", alertType, message, hostIP, alertType)
-		if err := mysqlBot.SendAlert(ctx, "数据库监控", alertType, message, hostIP, alertType, "mysql", nil); err != nil {
+		mysqlAlertKey := fmt.Sprintf("mysql_%s_%s", alertType, hostIP)
+		if err := mysqlBot.SendAlert(ctx, "数据库监控", alertType, message, hostIP, alertType, "mysql", map[string]interface{}{"destinations": destinations, "alert_key": mysqlAlertKey}); err != nil {
 			slog.Error(fmt.Sprintf("Failed to send MySQL %s alert", alertType), "error", err, "message", startupMsg, "component", "main")
 			errors = append(errors, err)
 		} else {
-			slog.Info(fmt.Sprintf("Sent MySQL %s alert", alertType), "message", startupMsg, "component", "main")
+			slog.Info(fmt.Sprintf("Sent MySQL %s alert to destinations %v", alertType, destinations), "message", startupMsg, "component", "main")
 		}
 	}
 
@@ -235,6 +258,12 @@ func monitorAndAlert(ctx context.Context, cfg config.Config, globalBot, mysqlBot
 	var wg sync.WaitGroup
 	var errors []error
 	var errMutex sync.Mutex
+
+	// Define destinations for monitoring alerts
+	destinations := []string{"telegram"}
+	if cfg.MonitorWebURL != "" {
+		destinations = append(destinations, "web")
+	}
 
 	// Define a generic monitor function type
 	type monitorFunc func(context.Context, *alert.AlertBot, map[string]time.Time, *sync.Mutex, time.Duration) error

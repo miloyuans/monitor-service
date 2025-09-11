@@ -3,6 +3,8 @@ package alert
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +16,20 @@ import (
 
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+// UnsentAlert stores alerts that failed to send, tracking pending destinations.
+type UnsentAlert struct {
+	ID                  string    `json:"id"` // Unique alert ID
+	Title               string    `json:"title"`
+	Event               string    `json:"event"`
+	Details             string    `json:"details"`
+	HostIP              string    `json:"host_ip"`
+	AlertType           string    `json:"alert_type"`
+	Module              string    `json:"module"`
+	PendingDestinations []string  `json:"pending_destinations"`
+	Timestamp           time.Time `json:"timestamp"`
+	SpecificFields      map[string]interface{} `json:"specific_fields"`
+}
 
 // AlertBot handles sending alerts via Telegram and monitor-web.
 type AlertBot struct {
@@ -107,7 +123,7 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 
 	header = EscapeMarkdown(header)
 	timestamp = EscapeMarkdown(timestamp)
-	clusterName := EscapeMarkdown(a.ClusterName)
+	clusterName = EscapeMarkdown(a.ClusterName)
 	hostname = EscapeMarkdown(hostname)
 	hostIP = EscapeMarkdown(hostIP)
 	serviceName = EscapeMarkdown(serviceName)
@@ -120,132 +136,157 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 	return msg.String()
 }
 
-// SendAlert sends a Telegram alert and pushes to monitor-web with retry and persistence.
+// SendAlert sends an alert to specified destinations, tracking success/failure.
 func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, details, hostIP, alertType, module string, specificFields map[string]interface{}) error {
 	if a == nil && a.MonitorWebURL == "" {
 		slog.Warn("Alert bot and monitor-web URL are nil, skipping alert", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
 		return nil
 	}
 
-	var errors []error
-	if a != nil && a.Bot != nil {
-		message := a.FormatAlert(serviceName, eventName, details, hostIP, alertType)
-		if message == "" {
-			slog.Warn("Empty alert message, skipping Telegram alert", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
-		} else {
-			msg := tgbotapi.NewMessage(a.ChatID, message)
-			msg.ParseMode = tgbotapi.ModeMarkdownV2
-
-			taskCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-
-			ch := make(chan error, 1)
-			go func() {
-				_, err := a.Bot.Send(msg)
-				ch <- err
-			}()
-
-			select {
-			case <-taskCtx.Done():
-				slog.Warn("Telegram alert sending cancelled", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
-				errors = append(errors, taskCtx.Err())
-			case err := <-ch:
-				if err != nil {
-					slog.Error("Failed to send Telegram alert", "error", err, "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "alert_type", alertType, "component", "alert")
-					errors = append(errors, err)
-				} else {
-					slog.Info("Sent Telegram alert", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "alert_type", alertType, "component", "alert")
-				}
-			}
-		}
+	// Determine destinations
+	destinations := []string{"telegram"}
+	if a.MonitorWebURL != "" {
+		destinations = append(destinations, "web")
+	}
+	if dests, ok := specificFields["destinations"].([]string); ok && len(dests) > 0 {
+		destinations = dests
 	}
 
-	if a.MonitorWebURL != "" {
-		alertEvent := AlertEvent{
-			Timestamp:   time.Now(),
-			Module:      module,
-			ServiceName: serviceName,
-			EventName:   eventName,
-			Details:     details,
-			HostIP:      hostIP,
-			AlertType:   alertType,
-			ClusterName: a.ClusterName,
-			Hostname:    a.Hostname,
-		}
+	// Generate unique alert ID
+	alertID := specificFields["alert_key"].(string)
+	if alertID == "" {
+		hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%s:%s", serviceName, eventName, details, hostIP, time.Now().String())))
+		alertID = hex.EncodeToString(hash[:])
+	}
 
-		if specificFields != nil {
-			if bigKeysCount, ok := specificFields["big_keys_count"].(int); ok {
-				alertEvent.BigKeysCount = &bigKeysCount
-			}
-			if failedNodes, ok := specificFields["failed_nodes"].(string); ok {
-				alertEvent.FailedNodes = &failedNodes
-			}
-			if deadlocksInc, ok := specificFields["deadlocks_increment"].(int64); ok {
-				alertEvent.DeadlocksInc = &deadlocksInc
-			}
-			if slowQueriesInc, ok := specificFields["slow_queries_increment"].(int64); ok {
-				alertEvent.SlowQueriesInc = &slowQueriesInc
-			}
-			if connections, ok := specificFields["connections"].(int); ok {
-				alertEvent.Connections = &connections
-			}
-			if cpuUsage, ok := specificFields["cpu_usage"].(float64); ok {
-				alertEvent.CPUUsage = &cpuUsage
-			}
-			if memRemaining, ok := specificFields["mem_remaining"].(float64); ok {
-				alertEvent.MemRemaining = &memRemaining
-			}
-			if diskUsage, ok := specificFields["disk_usage"].(float64); ok {
-				alertEvent.DiskUsage = &diskUsage
-			}
-			if addedUsers, ok := specificFields["added_users"].(string); ok {
-				alertEvent.AddedUsers = &addedUsers
-			}
-			if removedUsers, ok := specificFields["removed_users"].(string); ok {
-				alertEvent.RemovedUsers = &removedUsers
-			}
-			if addedProcesses, ok := specificFields["added_processes"].(string); ok {
-				alertEvent.AddedProcesses = &addedProcesses
-			}
-			if removedProcesses, ok := specificFields["removed_processes"].(string); ok {
-				alertEvent.RemovedProcesses = &removedProcesses
-			}
-		}
+	unsent := &UnsentAlert{
+		ID:                  alertID,
+		Title:              serviceName,
+		Event:              eventName,
+		Details:            details,
+		HostIP:             hostIP,
+		AlertType:          alertType,
+		Module:             module,
+		PendingDestinations: destinations,
+		Timestamp:          time.Now(),
+		SpecificFields:     specificFields,
+	}
 
+	var errors []error
+	for i := len(unsent.PendingDestinations) - 1; i >= 0; i-- {
+		dest := unsent.PendingDestinations[i]
 		for attempt := 1; attempt <= a.RetryTimes; attempt++ {
 			taskCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 
-			if err := a.sendToMonitorWeb(taskCtx, alertEvent); err == nil {
-				slog.Info("Sent alert to monitor-web", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "alert_type", alertType, "attempt", attempt, "component", "alert")
-				return nil
-			} else {
-				slog.Error("Failed to send alert to monitor-web", "error", err, "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "alert_type", alertType, "attempt", attempt, "component", "alert")
-				if attempt < a.RetryTimes {
-					select {
-					case <-ctx.Done():
-						slog.Warn("Alert sending cancelled during retry", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
-						break
-					case <-time.After(a.RetryDelay):
-						continue
-					}
-				}
-				errors = append(errors, err)
+			err := a.sendToDestination(taskCtx, dest, unsent)
+			if err == nil {
+				slog.Info("Sent alert to destination", "alert_id", alertID, "destination", dest, "service_name", serviceName, "event_name", eventName, "attempt", attempt, "component", "alert")
+				unsent.PendingDestinations = append(unsent.PendingDestinations[:i], unsent.PendingDestinations[i+1:]...)
+				break
 			}
+			slog.Error("Failed to send alert to destination", "alert_id", alertID, "destination", dest, "error", err, "service_name", serviceName, "event_name", eventName, "attempt", attempt, "component", "alert")
+			if attempt < a.RetryTimes {
+				select {
+				case <-ctx.Done():
+					errors = append(errors, ctx.Err())
+					break
+				case <-time.After(a.RetryDelay):
+					continue
+				}
+			}
+			errors = append(errors, err)
 		}
+	}
 
-		if err := a.persistAlert(alertEvent); err != nil {
-			slog.Error("Failed to persist alert to file", "error", err, "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
+	// Persist if there are pending destinations
+	if len(unsent.PendingDestinations) > 0 {
+		if err := a.persistAlert(*unsent); err != nil {
+			slog.Error("Failed to persist alert", "alert_id", alertID, "error", err, "component", "alert")
 			errors = append(errors, fmt.Errorf("failed to persist alert: %w", err))
 		} else {
-			slog.Info("Persisted alert to file after failed retries", "service_name", serviceName, "event_name", eventName, "host_ip", hostIP, "component", "alert")
+			slog.Info("Persisted alert with pending destinations", "alert_id", alertID, "pending_destinations", unsent.PendingDestinations, "component", "alert")
 		}
 	}
 
 	if len(errors) > 0 {
-		return fmt.Errorf("failed to send alert: %v", errors)
+		return fmt.Errorf("failed to send alert to some destinations: %v", errors)
 	}
 	return nil
+}
+
+// sendToDestination sends an alert to a specific destination.
+func (a *AlertBot) sendToDestination(ctx context.Context, dest string, alert *UnsentAlert) error {
+	switch dest {
+	case "telegram":
+		if a.Bot == nil {
+			return fmt.Errorf("telegram bot not initialized")
+		}
+		message := a.FormatAlert(alert.Title, alert.Event, alert.Details, alert.HostIP, alert.AlertType)
+		if message == "" {
+			return fmt.Errorf("empty alert message")
+		}
+		msg := tgbotapi.NewMessage(a.ChatID, message)
+		msg.ParseMode = tgbotapi.ModeMarkdownV2
+		_, err := a.Bot.Send(msg)
+		return err
+	case "web":
+		if a.MonitorWebURL == "" {
+			return fmt.Errorf("monitor-web URL not configured")
+		}
+		event := AlertEvent{
+			Timestamp:   alert.Timestamp,
+			Module:      alert.Module,
+			ServiceName: alert.Title,
+			EventName:   alert.Event,
+			Details:     alert.Details,
+			HostIP:      alert.HostIP,
+			AlertType:   alert.AlertType,
+			ClusterName: a.ClusterName,
+			Hostname:    a.Hostname,
+		}
+		if alert.SpecificFields != nil {
+			if bigKeysCount, ok := alert.SpecificFields["big_keys_count"].(int); ok {
+				event.BigKeysCount = &bigKeysCount
+			}
+			if failedNodes, ok := alert.SpecificFields["failed_nodes"].(string); ok {
+				event.FailedNodes = &failedNodes
+			}
+			if deadlocksInc, ok := alert.SpecificFields["deadlocks_increment"].(int64); ok {
+				event.DeadlocksInc = &deadlocksInc
+			}
+			if slowQueriesInc, ok := alert.SpecificFields["slow_queries_increment"].(int64); ok {
+				event.SlowQueriesInc = &slowQueriesInc
+			}
+			if connections, ok := alert.SpecificFields["connections"].(int); ok {
+				event.Connections = &connections
+			}
+			if cpuUsage, ok := alert.SpecificFields["cpu_usage"].(float64); ok {
+				event.CPUUsage = &cpuUsage
+			}
+			if memRemaining, ok := alert.SpecificFields["mem_remaining"].(float64); ok {
+				event.MemRemaining = &memRemaining
+			}
+			if diskUsage, ok := alert.SpecificFields["disk_usage"].(float64); ok {
+				event.DiskUsage = &diskUsage
+			}
+			if addedUsers, ok := alert.SpecificFields["added_users"].(string); ok {
+				event.AddedUsers = &addedUsers
+			}
+			if removedUsers, ok := alert.SpecificFields["removed_users"].(string); ok {
+				event.RemovedUsers = &removedUsers
+			}
+			if addedProcesses, ok := alert.SpecificFields["added_processes"].(string); ok {
+				event.AddedProcesses = &addedProcesses
+			}
+			if removedProcesses, ok := alert.SpecificFields["removed_processes"].(string); ok {
+				event.RemovedProcesses = &removedProcesses
+			}
+		}
+		return a.sendToMonitorWeb(ctx, event)
+	default:
+		return fmt.Errorf("unknown destination: %s", dest)
+	}
 }
 
 // sendToMonitorWeb sends the alert to monitor-web with timeout.
@@ -276,12 +317,12 @@ func (a *AlertBot) sendToMonitorWeb(ctx context.Context, alertEvent AlertEvent) 
 }
 
 // persistAlert appends the alert to unsent_alerts.json with reduced lock contention.
-func (a *AlertBot) persistAlert(alertEvent AlertEvent) error {
+func (a *AlertBot) persistAlert(alert UnsentAlert) error {
 	a.fileMutex.Lock()
 	defer a.fileMutex.Unlock()
 
 	filePath := "unsent_alerts.json"
-	var alerts []AlertEvent
+	var alerts []UnsentAlert
 
 	data, err := os.ReadFile(filePath)
 	if err == nil {
@@ -292,7 +333,7 @@ func (a *AlertBot) persistAlert(alertEvent AlertEvent) error {
 		return fmt.Errorf("failed to read unsent alerts file: %w", err)
 	}
 
-	alerts = append(alerts, alertEvent)
+	alerts = append(alerts, alert)
 
 	data, err = json.MarshalIndent(alerts, "", "  ")
 	if err != nil {
@@ -312,10 +353,10 @@ func (a *AlertBot) persistAlert(alertEvent AlertEvent) error {
 	return nil
 }
 
-// LoadAndRetryUnsentAlerts loads unsent alerts and retries sending them with concurrency control.
+// LoadAndRetryUnsentAlerts loads unsent alerts and retries sending them to pending destinations.
 func (a *AlertBot) LoadAndRetryUnsentAlerts(ctx context.Context) error {
-	if a.MonitorWebURL == "" {
-		slog.Debug("No monitor-web URL configured, skipping unsent alerts retry", "component", "alert")
+	if a.MonitorWebURL == "" && a.Bot == nil {
+		slog.Debug("No destinations configured, skipping unsent alerts retry", "component", "alert")
 		return nil
 	}
 
@@ -331,7 +372,7 @@ func (a *AlertBot) LoadAndRetryUnsentAlerts(ctx context.Context) error {
 		return fmt.Errorf("failed to read unsent alerts file: %w", err)
 	}
 
-	var alerts []AlertEvent
+	var alerts []UnsentAlert
 	if err := json.Unmarshal(data, &alerts); err != nil {
 		a.fileMutex.Unlock()
 		return fmt.Errorf("failed to unmarshal unsent alerts: %w", err)
@@ -349,7 +390,7 @@ func (a *AlertBot) LoadAndRetryUnsentAlerts(ctx context.Context) error {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var errors []error
-	var remaining []AlertEvent
+	var remaining []UnsentAlert
 
 	for _, alert := range alerts {
 		select {
@@ -360,37 +401,37 @@ func (a *AlertBot) LoadAndRetryUnsentAlerts(ctx context.Context) error {
 			continue
 		case sem <- struct{}{}:
 			wg.Add(1)
-			go func(alert AlertEvent) {
+			go func(alert UnsentAlert) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				for attempt := 1; attempt <= a.RetryTimes; attempt++ {
-					taskCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-					defer cancel()
+				for i := len(alert.PendingDestinations) - 1; i >= 0; i-- {
+					dest := alert.PendingDestinations[i]
+					for attempt := 1; attempt <= a.RetryTimes; attempt++ {
+						taskCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+						defer cancel()
 
-					if err := a.sendToMonitorWeb(taskCtx, alert); err == nil {
-						slog.Info("Sent unsent alert to monitor-web", "service_name", alert.ServiceName, "event_name", alert.EventName, "host_ip", alert.HostIP, "alert_type", alert.AlertType, "attempt", attempt, "component", "alert")
-						return
-					}
-					slog.Error("Failed to send unsent alert to monitor-web", "error", err, "service_name", alert.ServiceName, "event_name", alert.EventName, "host_ip", alert.HostIP, "alert_type", alert.AlertType, "attempt", attempt, "component", "alert")
-					if attempt < a.RetryTimes {
-						select {
-						case <-ctx.Done():
-							mu.Lock()
-							remaining = append(remaining, alert)
-							mu.Unlock()
-							return
-						case <-time.After(a.RetryDelay):
-							continue
+						if err := a.sendToDestination(taskCtx, dest, &alert); err == nil {
+							slog.Info("Sent unsent alert to destination", "alert_id", alert.ID, "destination", dest, "service_name", alert.Title, "event_name", alert.Event, "attempt", attempt, "component", "alert")
+							alert.PendingDestinations = append(alert.PendingDestinations[:i], alert.PendingDestinations[i+1:]...)
+							break
+						}
+						slog.Error("Failed to send unsent alert to destination", "alert_id", alert.ID, "destination", dest, "error", err, "service_name", alert.Title, "event_name", alert.Event, "attempt", attempt, "component", "alert")
+						if attempt < a.RetryTimes {
+							select {
+							case <-ctx.Done():
+								break
+							case <-time.After(a.RetryDelay):
+								continue
+							}
 						}
 					}
+				}
+				if len(alert.PendingDestinations) > 0 {
 					mu.Lock()
 					remaining = append(remaining, alert)
 					mu.Unlock()
 				}
-				mu.Lock()
-				errors = append(errors, fmt.Errorf("failed to retry alert for %s: all %d attempts failed", alert.ServiceName, a.RetryTimes))
-				mu.Unlock()
 			}(alert)
 		}
 	}
