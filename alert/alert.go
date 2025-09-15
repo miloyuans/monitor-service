@@ -19,7 +19,7 @@ import (
 
 // UnsentAlert stores alerts that failed to send, tracking pending destinations.
 type UnsentAlert struct {
-	ID                  string    `json:"id"` // Unique alert ID
+	ID                  string    `json:"id"`
 	Title               string    `json:"title"`
 	Event               string    `json:"event"`
 	Details             string    `json:"details"`
@@ -123,7 +123,7 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 
 	header = EscapeMarkdown(header)
 	timestamp = EscapeMarkdown(timestamp)
-	clusterName := EscapeMarkdown(a.ClusterName)
+	clusterName = EscapeMarkdown(a.ClusterName)
 	hostname = EscapeMarkdown(hostname)
 	hostIP = EscapeMarkdown(hostIP)
 	serviceName = EscapeMarkdown(serviceName)
@@ -153,8 +153,10 @@ func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, detail
 	}
 
 	// Generate unique alert ID
-	alertID := specificFields["alert_key"].(string)
-	if alertID == "" {
+	alertID := ""
+	if val, ok := specificFields["alert_key"].(string); ok && val != "" {
+		alertID = val
+	} else {
 		hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%s:%s", serviceName, eventName, details, hostIP, time.Now().String())))
 		alertID = hex.EncodeToString(hash[:])
 	}
@@ -179,13 +181,12 @@ func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, detail
 			taskCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 
-			err := a.sendToDestination(taskCtx, dest, unsent)
-			if err == nil {
+			if err := a.sendToDestination(taskCtx, dest, unsent); err == nil {
 				slog.Info("Sent alert to destination", "alert_id", alertID, "destination", dest, "service_name", serviceName, "event_name", eventName, "attempt", attempt, "component", "alert")
 				unsent.PendingDestinations = append(unsent.PendingDestinations[:i], unsent.PendingDestinations[i+1:]...)
 				break
 			}
-			slog.Error("Failed to send alert to destination", "alert_id", alertID, "destination", dest, "error", err, "service_name", serviceName, "event_name", eventName, "attempt", attempt, "component", "alert")
+			slog.Warn("Failed to send alert to destination", "alert_id", alertID, "destination", dest, "error", err, "service_name", serviceName, "event_name", eventName, "attempt", attempt, "component", "alert")
 			if attempt < a.RetryTimes {
 				select {
 				case <-ctx.Done():
@@ -199,7 +200,6 @@ func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, detail
 		}
 	}
 
-	// Persist if there are pending destinations
 	if len(unsent.PendingDestinations) > 0 {
 		if err := a.persistAlert(*unsent); err != nil {
 			slog.Error("Failed to persist alert", "alert_id", alertID, "error", err, "component", "alert")
@@ -340,14 +340,8 @@ func (a *AlertBot) persistAlert(alert UnsentAlert) error {
 		return fmt.Errorf("failed to marshal alerts: %w", err)
 	}
 
-	// Write to temporary file to avoid corruption
-	tmpFile := filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write to temporary file: %w", err)
-	}
-
-	if err := os.Rename(tmpFile, filePath); err != nil {
-		return fmt.Errorf("failed to rename temporary file: %w", err)
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write unsent alerts file: %w", err)
 	}
 
 	return nil
@@ -384,7 +378,6 @@ func (a *AlertBot) LoadAndRetryUnsentAlerts(ctx context.Context) error {
 		return nil
 	}
 
-	// Use a worker pool to limit concurrency
 	const maxWorkers = 5
 	sem := make(chan struct{}, maxWorkers)
 	var wg sync.WaitGroup
@@ -416,7 +409,7 @@ func (a *AlertBot) LoadAndRetryUnsentAlerts(ctx context.Context) error {
 							alert.PendingDestinations = append(alert.PendingDestinations[:i], alert.PendingDestinations[i+1:]...)
 							break
 						}
-						slog.Error("Failed to send unsent alert to destination", "alert_id", alert.ID, "destination", dest, "error", err, "service_name", alert.Title, "event_name", alert.Event, "attempt", attempt, "component", "alert")
+						slog.Warn("Failed to send unsent alert to destination", "alert_id", alert.ID, "destination", dest, "error", err, "service_name", alert.Title, "event_name", alert.Event, "attempt", attempt, "component", "alert")
 						if attempt < a.RetryTimes {
 							select {
 							case <-ctx.Done():
@@ -437,7 +430,6 @@ func (a *AlertBot) LoadAndRetryUnsentAlerts(ctx context.Context) error {
 	}
 	wg.Wait()
 
-	// Write back remaining unsent alerts
 	if len(remaining) == 0 {
 		a.fileMutex.Lock()
 		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {

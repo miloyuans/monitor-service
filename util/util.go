@@ -7,39 +7,48 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"monitor-service/alert"
 	"sync"
 	"time"
+
+	"monitor-service/alert"
 )
 
 // SendAlert sends a deduplicated alert with consistent logging.
-func SendAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, extra string, metadata map[string]interface{}) error {
+func SendAlert(ctx context.Context, bot *alert.AlertBot, alertCache map[string]time.Time, cacheMutex *sync.Mutex, alertSilenceDuration time.Duration, serviceName, eventName, details, hostIP, alertType, module string, specificFields map[string]interface{}) error {
+	// Ensure alert_key is set
+	if _, ok := specificFields["alert_key"]; !ok {
+		specificFields["alert_key"] = fmt.Sprintf("%s_%s_%s", module, alertType, hostIP)
+	}
+
 	hash, err := MD5Hash(details)
 	if err != nil {
-		slog.Error("Failed to generate alert hash", "error", err, "component", serviceName)
+		slog.Error("Failed to generate alert hash", "error", err, "service_name", serviceName, "module", module, "component", "util")
 		return fmt.Errorf("failed to generate alert hash: %w", err)
 	}
+
 	cacheMutex.Lock()
 	now := time.Now()
 	if timestamp, ok := alertCache[hash]; ok && now.Sub(timestamp) < alertSilenceDuration {
-		slog.Info("Skipping duplicate alert", "hash", hash, "component", serviceName)
+		slog.Debug("Skipping duplicate alert", "hash", hash, "service_name", serviceName, "module", module, "component", "util")
 		cacheMutex.Unlock()
 		return nil
 	}
 	alertCache[hash] = now
+	// Clean up expired cache entries
 	for h, t := range alertCache {
 		if now.Sub(t) >= alertSilenceDuration {
 			delete(alertCache, h)
-			slog.Debug("Removed expired alert cache entry", "hash", h, "component", serviceName)
+			slog.Debug("Removed expired alert cache entry", "hash", h, "service_name", serviceName, "module", module, "component", "util")
 		}
 	}
 	cacheMutex.Unlock()
-	slog.Debug("Sending alert", "service", serviceName, "event", eventName, "details", details, "component", serviceName)
-	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType, extra, metadata); err != nil {
-		slog.Error("Failed to send alert", "error", err, "service", serviceName, "event", eventName, "details", details, "component", serviceName)
+
+	slog.Debug("Sending alert", "service_name", serviceName, "event_name", eventName, "module", module, "details", details, "component", "util")
+	if err := bot.SendAlert(ctx, serviceName, eventName, details, hostIP, alertType, module, specificFields); err != nil {
+		slog.Error("Failed to send alert", "error", err, "service_name", serviceName, "event_name", eventName, "module", module, "details", details, "component", "util")
 		return fmt.Errorf("failed to send alert: %w", err)
 	}
-	slog.Info("Sent alert", "service", serviceName, "event", eventName, "details", details, "component", serviceName)
+	slog.Info("Sent alert", "service_name", serviceName, "event_name", eventName, "module", module, "details", details, "component", "util")
 	return nil
 }
 
@@ -61,7 +70,7 @@ func GetPrivateIP() (string, error) {
 	}
 
 	slog.Warn("No private IPv4 address found", "component", "util")
-	return "", nil // Return empty string for fallback, as per original behavior
+	return "", nil
 }
 
 // isPrivateIP checks if an IP is in a private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
