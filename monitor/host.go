@@ -216,9 +216,26 @@ func getTopCPUProcesses(ctx context.Context, procs []*process.Process, n int) (s
 		stime string
 		tty   string
 	}
+	// Initialize CPU percent for all processes (first call returns 0, but sets baseline)
+	for _, p := range procs {
+		_, err := p.CPUPercentWithContext(ctx)
+		if err != nil {
+			slog.Warn("Failed to initialize CPU percent for process", "pid", p.Pid, "error", err, "component", "host")
+		}
+	}
+
+	// Sleep to allow CPU usage accumulation (short interval to minimize delay)
+	time.Sleep(100 * time.Millisecond)
+
+	// Now get the actual CPU percent (second call calculates delta)
 	var top []procCPU
 	for _, p := range procs {
-		if cpu, err := p.CPUPercentWithContext(ctx); err == nil && cpu > 0 {
+		cpu, err := p.CPUPercentWithContext(ctx)
+		if err != nil {
+			slog.Warn("Failed to get CPU percent for process", "pid", p.Pid, "error", err, "component", "host")
+			continue
+		}
+		if cpu > 0 {
 			name, err := p.NameWithContext(ctx)
 			if err != nil {
 				name = "unknown"
