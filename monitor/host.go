@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -175,15 +177,38 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	fmt.Fprintf(&details, "**磁盘 IO 使用率**: %s\n", diskIOStatus)
 
 	// Disk usage (root)
+	diskStatus := "正常✅"
+	usedPercent := 0.0
 	du, err := disk.UsageWithContext(ctx, "/")
 	if err != nil {
-		slog.Error("Failed to get disk usage", "path", "/", "error", err, "component", "host")
-		details.WriteString(fmt.Sprintf("无法获取磁盘使用率: %v", err))
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		slog.Error("Failed to get disk usage with gopsutil", "path", "/", "error", err, "component", "host")
+		// Fallback to df command
+		cmd := exec.CommandContext(ctx, "df", "-h", "/")
+		output, fallbackErr := cmd.Output()
+		if fallbackErr != nil {
+			slog.Error("Fallback df command failed", "error", fallbackErr, "component", "host")
+			details.WriteString(fmt.Sprintf("无法获取磁盘使用率: %v (gopsutil) 和 %v (df)", err, fallbackErr))
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		}
+		lines := strings.Split(string(output), "\n")
+		if len(lines) > 1 {
+			fields := strings.Fields(lines[1])
+			if len(fields) > 4 {
+				usedPercentStr := strings.TrimSuffix(fields[4], "%")
+				var parseErr error
+				usedPercent, parseErr = strconv.ParseFloat(usedPercentStr, 64)
+				if parseErr != nil {
+					slog.Warn("Failed to parse df output", "error", parseErr, "output", string(output), "component", "host")
+				}
+			}
+		}
+	} else {
+		usedPercent = du.UsedPercent
 	}
-	diskStatus := "正常✅"
-	if du.UsedPercent > cfg.DiskThreshold {
-		diskStatus = fmt.Sprintf("异常❌ %.2f%% > %.2f%%", du.UsedPercent, cfg.DiskThreshold)
+
+	slog.Debug("Disk usage retrieved", "used_percent", usedPercent, "threshold", cfg.DiskThreshold, "component", "host")
+	if usedPercent > cfg.DiskThreshold {
+		diskStatus = fmt.Sprintf("异常❌ %.2f%% > %.2f%%", usedPercent, cfg.DiskThreshold)
 		hasIssue = true
 	}
 	fmt.Fprintf(&details, "**磁盘使用率**: %s\n", diskStatus)
