@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
-	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -185,18 +182,11 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
 	}
 	diskStatus := "正常✅"
-	diskTopDirsMsg := ""
 	if du.UsedPercent > cfg.DiskThreshold {
 		diskStatus = fmt.Sprintf("异常❌ %.2f%% > %.2f%%", du.UsedPercent, cfg.DiskThreshold)
 		hasIssue = true
-		if diskTopDirsMsg, err = getTopDiskDirectories(ctx, 3); err != nil {
-			slog.Warn("Failed to get top disk directories", "error", err, "component", "host")
-		}
 	}
 	fmt.Fprintf(&details, "**磁盘使用率**: %s\n", diskStatus)
-	if diskTopDirsMsg != "" {
-		details.WriteString(diskTopDirsMsg)
-	}
 
 	if hasIssue {
 		slog.Info("Host resource issues detected", "cpu", cpuStatus, "memory", memStatus, "net_io", netIOStatus, "disk_io", diskIOStatus, "disk_io_rate", diskIORate, "disk", diskStatus, "component", "host")
@@ -343,90 +333,4 @@ func getTopMemoryProcesses(ctx context.Context, procs []*process.Process, n int)
 			top[i].tty)
 	}
 	return msg.String(), nil
-}
-
-// getTopDiskDirectories gets the top N directories by disk usage.
-func getTopDiskDirectories(ctx context.Context, n int) (string, error) {
-	// Use platform-specific command
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		slog.Warn("getTopDiskDirectories not implemented for Windows", "component", "host")
-		return "", fmt.Errorf("disk usage monitoring not supported on Windows")
-	} else {
-		cmd = exec.CommandContext(ctx, "du", "-sh", "/*")
-	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		slog.Error("Failed to get disk usage for directories", "error", err, "output", string(output), "component", "host")
-		return "", fmt.Errorf("du command failed: %w", err)
-	}
-	lines := strings.Split(string(output), "\n")
-	var dirs []struct {
-		size    float64
-		sizeStr string
-		path    string
-	}
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
-		}
-		size, sizeStr := parseSize(fields[0])
-		if size == 0 {
-			continue // Skip invalid sizes
-		}
-		dirs = append(dirs, struct{ size float64; sizeStr string; path string }{size: size, sizeStr: sizeStr, path: fields[1]})
-	}
-	if len(dirs) == 0 {
-		slog.Debug("No directories with valid disk usage found", "component", "host")
-		return "", nil
-	}
-	sort.Slice(dirs, func(i, j int) bool { return dirs[i].size > dirs[j].size })
-	var msg strings.Builder
-	msg.WriteString("\n**最占用磁盘空间的 3 个目录**:\n")
-	fmt.Fprintf(&msg, "| %s | %s |\n",
-		"Size", "Path")
-	fmt.Fprintf(&msg, "|%s|%s|\n",
-		"---", "---")
-	for i := 0; i < n && i < len(dirs); i++ {
-		fmt.Fprintf(&msg, "| %s | %s |\n", dirs[i].sizeStr, dirs[i].path)
-	}
-	return msg.String(), nil
-}
-
-// parseSize parses size strings like "1.0K", "2.5M" to bytes for sorting and returns original string.
-func parseSize(size string) (float64, string) {
-	if len(size) == 0 {
-		return 0, ""
-	}
-	unit := byte(0)
-	if len(size) > 0 && (size[len(size)-1] < '0' || size[len(size)-1] > '9') {
-		unit = size[len(size)-1]
-		size = size[:len(size)-1]
-	}
-	value, err := strconv.ParseFloat(size, 64)
-	if err != nil {
-		slog.Warn("Failed to parse size", "size", size, "error", err, "component", "host")
-		return 0, ""
-	}
-	originalSize := size
-	if unit != 0 {
-		originalSize += string(unit)
-	}
-	switch unit {
-	case 'K':
-		return value * 1024, originalSize
-	case 'M':
-		return value * 1024 * 1024, originalSize
-	case 'G':
-		return value * 1024 * 1024 * 1024, originalSize
-	case 'T':
-		return value * 1024 * 1024 * 1024 * 1024, originalSize
-	default:
-		return value, originalSize
-	}
 }
