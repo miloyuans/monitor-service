@@ -39,7 +39,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if err != nil {
 		slog.Error("Failed to get processes", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取进程列表: %v", err))
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 	}
 
 	// CPU usage
@@ -47,7 +47,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if err != nil {
 		slog.Error("Failed to get CPU usage", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取 CPU 使用率: %v", err))
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 	}
 	var cpuAvg float64
 	for _, p := range cpuPercents {
@@ -77,7 +77,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if err != nil {
 		slog.Error("Failed to get memory usage", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取内存使用率: %v", err))
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 	}
 	remainingPercent := 100.0 - vm.UsedPercent
 	remainingThreshold := 100.0 - cfg.MemThreshold
@@ -101,7 +101,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if err != nil {
 		slog.Error("Failed to get initial network IO", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取网络 IO: %v", err))
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 	}
 	select {
 	case <-time.After(time.Second):
@@ -113,7 +113,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if err != nil {
 		slog.Error("Failed to get final network IO", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取网络 IO: %v", err))
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 	}
 	var netBytesSent, netBytesRecv float64
 	for i, io1 := range netIO1 {
@@ -141,7 +141,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if err != nil {
 		slog.Error("Failed to get initial disk IO", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取磁盘 IO: %v", err))
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 	}
 	select {
 	case <-time.After(time.Second):
@@ -153,7 +153,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if err != nil {
 		slog.Error("Failed to get final disk IO", "error", err, "component", "host")
 		details.WriteString(fmt.Sprintf("无法获取磁盘 IO: %v", err))
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 	}
 	var diskRead, diskWrite float64
 	for name, io1 := range diskIO1 {
@@ -188,7 +188,7 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 		if fallbackErr != nil {
 			slog.Error("Fallback df command failed", "error", fallbackErr, "component", "host")
 			details.WriteString(fmt.Sprintf("无法获取磁盘使用率: %v (gopsutil) 和 %v (df)", err, fallbackErr))
-			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+			return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 		}
 		lines := strings.Split(string(output), "\n")
 		if len(lines) > 1 {
@@ -210,12 +210,13 @@ func Host(ctx context.Context, cfg config.HostConfig, bot *alert.AlertBot, alert
 	if usedPercent > cfg.DiskThreshold {
 		diskStatus = fmt.Sprintf("异常❌ %.2f%% > %.2f%%", usedPercent, cfg.DiskThreshold)
 		hasIssue = true
+		slog.Info("Disk threshold exceeded", "used_percent", usedPercent, "component", "host")
 	}
 	fmt.Fprintf(&details, "**磁盘使用率**: %s\n", diskStatus)
 
 	if hasIssue {
 		slog.Info("Host resource issues detected", "cpu", cpuStatus, "memory", memStatus, "net_io", netIOStatus, "disk_io", diskIOStatus, "disk_io_rate", diskIORate, "disk", diskStatus, "component", "host")
-		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "", map[string]interface{}{})
+		return util.SendAlert(ctx, bot, alertCache, cacheMutex, alertSilenceDuration, "主机告警", "服务异常", details.String(), hostIP, "alert", "host", map[string]interface{}{})
 	}
 	slog.Debug("No host resource issues detected", "component", "host")
 	return nil
