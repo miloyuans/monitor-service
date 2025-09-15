@@ -123,7 +123,7 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 
 	header = EscapeMarkdown(header)
 	timestamp = EscapeMarkdown(timestamp)
-	clusterName = EscapeMarkdown(a.ClusterName)
+	clusterName := EscapeMarkdown(a.ClusterName)
 	hostname = EscapeMarkdown(hostname)
 	hostIP = EscapeMarkdown(hostIP)
 	serviceName = EscapeMarkdown(serviceName)
