@@ -123,7 +123,7 @@ func (a *AlertBot) FormatAlert(serviceName, eventName, details, hostIP, alertTyp
 
 	header = EscapeMarkdown(header)
 	timestamp = EscapeMarkdown(timestamp)
-	clusterName = EscapeMarkdown(a.ClusterName)
+	clusterName := EscapeMarkdown(a.ClusterName)
 	hostname = EscapeMarkdown(hostname)
 	hostIP = EscapeMarkdown(hostIP)
 	serviceName = EscapeMarkdown(serviceName)
@@ -181,7 +181,8 @@ func (a *AlertBot) SendAlert(ctx context.Context, serviceName, eventName, detail
 			taskCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 
-			if err := a.sendToDestination(taskCtx, dest, unsent); err == nil {
+			err := a.sendToDestination(taskCtx, dest, unsent)
+			if err == nil {
 				slog.Info("Sent alert to destination", "alert_id", alertID, "destination", dest, "service_name", serviceName, "event_name", eventName, "attempt", attempt, "component", "alert")
 				unsent.PendingDestinations = append(unsent.PendingDestinations[:i], unsent.PendingDestinations[i+1:]...)
 				break
@@ -404,7 +405,8 @@ func (a *AlertBot) LoadAndRetryUnsentAlerts(ctx context.Context) error {
 						taskCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 						defer cancel()
 
-						if err := a.sendToDestination(taskCtx, dest, &alert); err == nil {
+						err := a.sendToDestination(taskCtx, dest, &alert)
+						if err == nil {
 							slog.Info("Sent unsent alert to destination", "alert_id", alert.ID, "destination", dest, "service_name", alert.Title, "event_name", alert.Event, "attempt", attempt, "component", "alert")
 							alert.PendingDestinations = append(alert.PendingDestinations[:i], alert.PendingDestinations[i+1:]...)
 							break
